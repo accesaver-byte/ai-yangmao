@@ -12,7 +12,7 @@
 
 ## 验证证据
 
-验证只在隔离分支的 GitHub Actions / Node 24 上执行；Worker 集成用仓库现有的 migration-backed SQLite harness，不是生产 D1。
+验证在隔离分支的 GitHub Actions / Node 24 上执行；Worker 集成用仓库现有的 migration-backed SQLite harness，不是生产 D1。
 
 - 基线：typecheck 通过，331 个 Vitest 测试、8 个 CLI 测试通过。
 - 新增12个回归/保护测试。产品修复前6个失败，涵盖已拒/已批准重复回队、两种人工编辑状态下的同数字周期变化、拒绝时版本竞争、审核日志失败回滚。
@@ -22,7 +22,7 @@
 - 修正红测及完整绿测运行：https://github.com/accesaver-byte/ai-yangmao/actions/runs/38054794747
 - 第二次运行的 `phase1-red-green-validation` artifact 包含日志、实际修复patch、源文件快照、已验证提交与npm audit结果；artifact设定14天保留。
 
-为访问Node24和真实锁文件依赖，执行期间使用了临时分支专用验证workflow和补丁runner。它们已在开PR前删除，最终diff不修改任何现有workflow。没有读取生产密钥、运行线上采集、发送消息、部署或修改生产数据库。代码diff已自检；未声称经过独立第二位审查者审查。
+为访问Node24和真实锁文件依赖，执行期间使用了临时分支专用验证workflow和补丁runner。最终PR差异已移除这些临时文件，不修改任何现有workflow。没有读取生产密钥、运行线上采集、发送消息、部署或修改生产数据库。代码diff已自检；未声称经过独立第二位审查者审查。
 
 ## 上线顺序（本次未执行）
 
@@ -35,8 +35,10 @@
 
 `0016`编号以本分支为准；若main后来增加同编号迁移，合并前重新编号并重跑migration-backed测试，禁止覆盖别人的迁移。
 
-## 未解决与后续范围
+## 第二/第三阶段实施SPEC
 
-本PR不是完整语义去重系统。跨语言/跨页面统一身份、结构化拒绝范围、从未生成offer的拒绝线索、通用资格冲突、并发不同ID身份约束、明确重开审核、候选级部分失败账本、跨页面条款变化三态，以及历史重复合并，属于第二/第三阶段SPEC，不在此补丁中宣称完成。
+先读 [Codex执行入口](superpowers/specs/2026-10-10-dedupe-handoff.md)，再读 [第二阶段：统一身份与审核记忆](superpowers/specs/2026-10-10-dedupe-phase2.md) 和 [第三阶段：历史回填与合并](superpowers/specs/2026-10-10-dedupe-phase3.md)。这些是待实施规格，不是已实现或已上线功能。
+
+本PR不是完整语义去重系统。跨语言/跨页面统一身份、结构化拒绝范围、从未生成offer的拒绝线索、通用资格冲突、并发不同ID身份约束、明确重开审核、候选级部分失败账本、跨页面条款变化三态，以及历史重复合并，属于后续SPEC，不在此补丁中宣称完成。
 
 安装时 `npm audit` 报告4个high依赖项：miniflare、sharp、source-map-js、wrangler；其中存在传递依赖关联，不能解读为4个独立的线上可利用漏洞。本次不升级锁文件；发布者应单独审查实际运行面和升级兼容性。完整audit JSON保存在验证artifact中。
