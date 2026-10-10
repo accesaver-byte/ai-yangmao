@@ -149,6 +149,8 @@ export const reviews = sqliteTable('reviews', {
 /** Rejected updates remain remembered independently of the ephemeral proposal queue. */
 export const rejectedOfferUpdates = sqliteTable('rejected_offer_updates', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  // Unique per rejection command; links all statements in the guarded transaction.
+  decisionKey: text('decision_key').unique(),
   offerId: text('offer_id').notNull().references(() => offers.id),
   evidence: text('evidence', { mode: 'json' }).$type<Evidence>().notNull(),
   diff: text('diff', { mode: 'json' }).$type<{field:string;from:unknown;to:unknown}[]>().notNull(),
