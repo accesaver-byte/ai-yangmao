@@ -1,22 +1,24 @@
 # Codex执行入口 — 羊毛去重第二/第三阶段
 
-版本：v1.0，2026-10-10。此文件是执行入口；先读本文件，再读两份SPEC。代码、测试和文档在独立分支完成；本文件不授权生产部署、生产数据操作或发送消息。
+版本：v1.1，2026-10-10。此文件是执行入口；先读本文件，再读两份SPEC。代码、测试和文档在独立分支完成；本文件不授权生产部署、生产数据操作或发送消息。
 
-## 1. 文件与当前交付
+## 1. 文件与正式交付
 
-- 第一阶段PR：#2，分支`fix/dedupe-review-stability-20261010`。
+- **正式交付PR：#4，分支`fix/dedupe-delivery-20261010-72ee4de`。**
 - 第一阶段说明：`docs/phase1-dedupe-fix-2026-10-10.md`。
 - 第二阶段完整SPEC：`docs/superpowers/specs/2026-10-10-dedupe-phase2.md`。
 - 第三阶段完整SPEC：`docs/superpowers/specs/2026-10-10-dedupe-phase3.md`。
 
-第一阶段仅修复三个确定问题，未合并main/部署。验证的产品代码提交为`ba9724f5a39bff1b0640c4a1f4618ef0a9fdf5b4`；新增12个回归/保护测试，修复前6个行为断言失败，修复后343个Vitest和8个CLI测试通过，typecheck/build:web通过。验证使用Actions Node24与SQLite集成，不是生产D1。
+两份SPEC中关于PR #2的引用是第一阶段验证过程的历史来源，**不是另一个需要合并的前置依赖**。正式PR #4从main基线直接复制同一套已验证代码，只带本目录这一套正式规格；不要从旧工作分支挑选其他中间SPEC草稿混合执行。实施内容以两份SPEC及本入口的补充合同为准，分支和PR定位以本入口为准。
+
+第一阶段仅修复三个确定问题，未合并main/部署。验证的产品代码提交为`ba9724f5a39bff1b0640c4a1f4618ef0a9fdf5b4`；新增12个回归/保护测试，修复前6个行为断言失败，修复后343个Vitest和8个CLI测试通过，typecheck/build:web通过。正式交付复用其8个实现/测试/迁移文件的相同Git blob。验证使用Actions Node24与SQLite集成，不是生产D1。
 
 第一阶段包含`0016_rejection_decision_key.sql`。后来main可能已有新的提交或同编号迁移，执行方必须现场核对，不照旧覆盖。npm安装期间报告的4个high依赖项未在本PR升级；应另行评估，不能把“测试通过”等同于“无供应链风险”。
 
 ## 2. 开始前的检查
 
 1. 读取本地AGENTS.md和现役data-contract/operations/learned-rules；检查`git status --short`，保留用户未提交修改，不reset/clean。
-2. `git fetch origin`后确认PR #2是否已合并。已合并则从最新main开新分支；未合并则从PR分支开后续分支，明确PR依赖，禁止把同一修复再次手抄一遍。
+2. `git fetch origin`后确认PR #4是否已合并。已合并则从最新main开新分支；未合并则从`origin/fix/dedupe-delivery-20261010-72ee4de`开后续分支，明确PR依赖。若其他PR先合入了相同修复，逐文件核对，不能再次手抄或覆盖。
 3. 在Node24环境运行npm ci、npm run typecheck、npm test、npm run build:web。记录真实输出、失败项和当前commit；不能用上面的历史测试数字当新执行证据。
 4. 枚举所有写入者、读取方与通知调用方：pipeline初抽/官方复核/lead复核，worker ingest/admin/manual/approve/edit/reject/unpublish/withdraw，脚本、审核技能、web、RSS和两种通知。
 5. 用本SPEC建立任务清单和测试矩阵。需求不明确时先在本地按保守行为实现并记录设计决定；凡会扩大生产授权、自动批准或破坏数据的操作必须停在计划/PR，不擅自执行。
@@ -72,7 +74,7 @@ S2中内部机制枚举是身份层补充，不替换现役offer.type、tags、r
 ## 4. 推荐PR拆分和依赖图
 
 ```
-PR #2（阶段1）
+PR #4（阶段1正式交付）
   → S2-A schema/类型 + S2-B事实规范化
   → S2-C历史召回 + S2-D统一解析/幂等命令
   → S2-E pipeline与S2-F管理入口全适配
@@ -164,4 +166,4 @@ it('keeps rejection after a lead-only dismissal', async () => {
 
 ## 8. 可直接交给Codex的任务说明
 
-> 请先阅读AGENTS.md、现役data-contract/operations，以及docs/superpowers/specs/2026-10-10-dedupe-handoff.md和两份phase2/phase3 SPEC。核对PR #2与最新main，不覆盖我的本地未提交改动，不重复实现阶段1。按handoff的依赖顺序分小PR实施，先写并运行失败测试，再做最小实现，每个单元运行完整typecheck/tests，涉及公开界面再跑build:web/UI测试。优先建立持久活动身份、全状态拒绝记忆、结构化事实比较、统一服务端闸门与幂等状态提交；不要仅调相似度或增加平台特例。历史部分默认只读inventory、dry-run和plan生成，保留旧记录和ID，要求planHash、版本检查、审计与unmerge。没有我的单独授权，不合并main、不部署、不执行生产迁移/回填/合并、不线上重抽、不发送消息。每次提交按报告模板列出实际验证与剩余风险。
+> 请先阅读AGENTS.md、现役data-contract/operations，以及docs/superpowers/specs/2026-10-10-dedupe-handoff.md和两份phase2/phase3 SPEC。核对正式PR #4与最新main，不覆盖我的本地未提交改动，不重复实现阶段1；旧PR #2只是验证来源，不要混入旧分支其他草稿。按handoff的依赖顺序分小PR实施，先写并运行失败测试，再做最小实现，每个单元运行完整typecheck/tests，涉及公开界面再跑build:web/UI测试。优先建立持久活动身份、全状态拒绝记忆、结构化事实比较、统一服务端闸门与幂等状态提交；不要仅调相似度或增加平台特例。历史部分默认只读inventory、dry-run和plan生成，保留旧记录和ID，要求planHash、版本检查、审计与unmerge。没有我的单独授权，不合并main、不部署、不执行生产迁移/回填/合并、不线上重抽、不发送消息。每次提交按报告模板列出实际验证与剩余风险。
