@@ -18,6 +18,10 @@
 
 ## 方案与实施范围
 
+- [去重第二、三阶段 Codex 执行入口](plans/dedupe-phase2-3-codex-handoff.md)：任务分解、测试与分PR门槛；第二、三阶段仅为设计，尚未实施或上线。
+- [第二阶段：统一活动身份与拒绝记忆 SPEC](specs/dedupe-phase2-identity-and-decisions-v1.md)：来源观察、实体/版本、结构化事实、全状态召回、审核决定范围、幂等任务与接口。
+- [第三阶段：历史回填与可逆归并 SPEC](specs/dedupe-phase3-historical-reconciliation-v1.md)：快照、候选清单、人工确认计划、原子合并、引用/通知兼容、回滚及dry-run工具。
+- [第一阶段去重修复验证](phase1-dedupe-fix-2026-10-10.md)：三个具体缺陷的修复与测试；包含0016增量迁移，部署前须先迁移。远端提交不等于生产上线。
 - [权益估值与存量字段补全方案 V1](plans/benefit-valuation-and-field-completion-v1.md)：首 30 天口径、创作者标准用量、多模型成本中位选择、公测未定价与字段结案设计；美元与图表部分已实施，管理员研判及其他字段工作仍按范围推进，现役规则以数据合同和通用规则为准。
 
 ## 美元估值核查
