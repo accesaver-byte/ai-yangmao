@@ -1,59 +1,33 @@
-# Codex 交接：活动身份、拒绝记忆与历史去重
+# Codex交接：第二、三阶段去重改造
 
-日期：2026-10-10。本文是后续执行提示，不表示第二/第三阶段已经实现。
-
-## 给 Codex 的提示词
-
-将下面整段交给项目中的 Codex；不需要重新手工复制第一阶段的代码修改。
+状态：设计交付，尚未实施。先读[规范入口与合同补充](README.md)，再读[主SPEC](dedupe-phase2-3.md)及[12步计划](dedupe-phase2-3-plan.md)。以下整段可直接交给项目中的Codex。
 
 ```text
-你正在维护 accesaver-byte/ai-yangmao（AI 羊毛牧场）。
+维护仓库 accesaver-byte/ai-yangmao（AI羊毛牧场）。
 
-请先读取：
-1. AGENTS.md
-2. docs/data-contract.md、pipeline/learned-rules.md、docs/operations.md
-3. docs/phase1-dedupe-fix-2026-10-10.md
-4. docs/specs/dedupe-phase2-3.md
-5. docs/specs/dedupe-phase2-3-plan.md
+先读取 AGENTS.md、docs/data-contract.md、pipeline/learned-rules.md、docs/operations.md，以及以下四份交付：
+- docs/phase1-dedupe-fix-2026-10-10.md
+- docs/specs/README.md（最终合同补充，必须读取）
+- docs/specs/dedupe-phase2-3.md（唯一主SPEC）
+- docs/specs/dedupe-phase2-3-plan.md（12个实施任务）
 
-任务：按规格实施第二阶段统一活动身份、来源观察、条款版本、拒绝决定和候选级处理闭环；第二阶段代码完成后，另起变更实施第三阶段历史扫描、经批准计划的逻辑合并及冲突可逆回滚工具。分阶段分小任务提交，不把两阶段压成一次大重构。
+先核对当前工作区、未提交改动、origin/main和PR #2。第一阶段已有分支fix/dedupe-review-stability-20261010，产品代码验证提交ba9724f5a39bff1b0640c4a1f4618ef0a9fdf5b4。使用实际最新代码，不重放旧补丁、不覆盖后续修复；PR未合并时可在自己的独立分支基于PR继续，不自行合并main。
 
-先核对当前分支、未提交改动、origin/main和PR #2。第一阶段已有独立分支 fix/dedupe-review-stability-20261010；其产品代码已验证提交是 ba9724f5a39bff1b0640c4a1f4618ef0a9fdf5b4，main基线当时是7cea69d95d2c27e2c1ebd7641a94bab2a696901d。读取实际最新代码，不重放旧补丁，不覆盖后来新增的修复。PR未合并时可以在新的本地独立分支上基于该PR继续，不自行合并main。
+按计划任务1–9实现第二阶段：统一subject身份、observation/candidate账本、条款版本、有限范围的拒绝决定、所有写入口的统一resolver、原子CAS提交、唯一审核任务及通知。通过阶段验收后另起变更完成任务10–12：历史只读扫描、固定计划、经批准的逻辑合并、引用兼容与冲突可逆回滚工具。不要一次大重构，也不要再复制平行SPEC。
 
-先执行基线检查，随后创建docs/implementation/dedupe-progress.md，逐项执行计划中的12个任务。每项先写可重现问题的行为测试并确认失败，再实现，再运行npm run typecheck、完整npm test和git diff --check；涉及UI/公开接口还须npm run build:web。数据库修改要在空库及旧版本快照上跑migration-backed集成测试。不能用只mock结果的测试来证明实际SQL正确。
+先执行Node24基线检查，创建docs/implementation/dedupe-progress.md。每个任务先写实际行为失败测试，再实现，再执行npm run typecheck、完整npm test、git diff --check；涉及web/公开接口加npm run build:web。数据库用空库和旧库迁移harness测试，SQL与身份函数不能mock为固定成功。逐任务提交并记录SHA、红绿结果和未完成项。
 
-必须解决两个核心体验：
-- 同优惠在不同语言、URL、页面或生成ID下出现，关联同一个主体/版本；已经批准或拒绝的同版事项不再新增人工审批。
-- 真正不同的资格、产品、池、单位、轮次，以及真实条款变化不能被误合并或静默丢弃。
+必须同时保证：同优惠不同语言/页面/ID不新增同版审批；真正不同产品、机制、资格、模型池、设备代际与独立轮次不误合并；同数字的周期/单位变化有新提案；已批准公开字段与人工提案不被覆盖；没有offer的拒绝线索也有持久、可检索、有范围的决定。模型sameAs/标题相似/金额相同只能召回，不能授权合并或批准。
 
-重要约束：
-- 模型sameAs/标题/数字相同只是线索；通过服务端统一resolver与证据关系确认。
-- 先区分活动身份，再比较条款；保留SAME/CHANGED/INSUFFICIENT三态，未知不当相同。
-- 被拒绝但从未生成offer的线索同样要有持久、可检索、有限作用范围的拒绝决定。
-- 同一页多候选逐项落处理结果，只重试失败项；duplicate是成功终态，不是写入错误。
-- 人工提案和已批准公开字段受保护；身份link不等于approve，补链接不等于reopen。
-- 并发通过持久键、版本/partition epoch CAS和D1 batch约束。0行匹配不是事务异常，必须让依赖写也不执行。
-- 历史默认dry-run。合并需固定plan hash、成员版本与管理员明确批准；逻辑合并保留全部原始证据/审核/修订/送达记录，旧链接仍可用，通知不能重推。
-- 一旦历史发生合并，关闭新resolver仍须保留canonical兼容读；不能回退到会重新公开loser的旧Worker。
+遵循规范补充的material_revision、identity/content revision、command状态与partition epoch。零行CAS不是SQL异常，所有依赖write必须受本次marker约束。写后超时用原commandKey读回。多候选只重试未解决项；manual补链不是reopen。历史送达pending/unknown不伪造成功、不自动重发；每日常驻榜保留既有按日展示行为。
 
-当前授权仅是代码、测试和明确的离线/本地演练及提交分支/PR。不授权部署、合并main、生产数据库导出/迁移/合并/清理、真实采集、付费模型调用或实际消息发送。不要自动读取.prod.secrets；本地验证有凭据不代表可访问生产。计划中的shadow采样和生产apply是后续发布者的验收门槛，不要为了勾选任务擅自执行。
+历史工具默认dry-run，保留全部证据/审核/修订/送达记录，不硬删除旧offer、不相加估值、不把合并当新上架。旧fragment和收藏可解析到canonical。历史合并后关闭resolver也不能关闭canonical兼容读；回滚遇新人工修改必须报告冲突。
 
-若没有生产快照或真实隔离D1授权，使用合成/已授权本地夹具交付工具，并明确哪些验证未执行，不能声称线上已清理。已有依赖audit high项另行报告，不借此无关升级整个锁文件。
+授权仅代码、测试、本地/离线演练、独立分支与PR。不授权合并main、生产数据库导出/迁移/合并/清理、部署、实际采集、付费模型调用或真实消息发送。不要自动读取.prod.secrets；有凭据不扩大授权。计划中的真实shadow运行日和生产apply由发布者以后另行授权。
 
-每个阶段交付：代码diff、迁移/回滚说明、红绿测试结果、固定golden语料结果、剩余风险、实际提交/PR、未执行的上线步骤。判断成功不能只看待办减少，必须同时检验真实新活动和条款变化仍被保留。
+没有生产快照或明确隔离D1授权就用合成/已授权本地夹具交付，并列明未执行验证。每阶段输出实际diff/SHA/PR、测试、migration及回滚说明、风险和未执行的上线步骤，不能把第一阶段通过数当作新阶段已验证，也不能只凭待办减少宣称成功。
 ```
 
-## 文件职责
+## 第一阶段发布注意
 
-| 文件 | 用途 |
-|---|---|
-| `docs/phase1-dedupe-fix-2026-10-10.md` | 已实现的3个具体修复、12项新增测试、真实验证证据及0016发布顺序 |
-| `docs/specs/dedupe-phase2-3.md` | 业务不变量、数据模型、身份/条款/拒绝算法、API、历史计划与回滚、验收和启用门槛 |
-| `docs/specs/dedupe-phase2-3-plan.md` | 12个有依赖、接口、文件和测试的实施任务；任务1–9为第二阶段，10–12为第三阶段 |
-| 本文件 | 直接粘贴给Codex的任务/边界与交接要求 |
-
-## 第一阶段发布提醒
-
-PR #2含增量迁移 `0016_rejection_decision_key.sql`。**先迁移D1，再部署对应Worker**，否则新schema读取新增列会失败。当前并未执行该生产迁移或部署。main若后来占用同编号，应合并前重编号并重新验证，不能覆盖旧迁移。
-
-第一阶段验证是在Node24 CI上执行：343个Vitest、8个CLI通过，typecheck和build:web通过；SQLite测试不等于真实D1已验收。第二、第三阶段不得将这个通过数沿用为自己尚未执行的验证结果。
+PR #2包含`0016_rejection_decision_key.sql`，必须先迁移数据库、再部署Worker。本次未执行任何生产迁移或部署。实施时核对迁移编号；若main已占用，重编号后重跑迁移测试，禁止覆盖旧migration。Node24 CI的343个Vitest和8个CLI通过，仅证明第一阶段；未进行真实生产D1验收。
