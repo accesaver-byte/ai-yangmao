@@ -15,6 +15,7 @@ const rssSource = { id: 'rss', kind: 'rss', tier: 'site', platformId: 'vendor', 
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
 
 interface HarnessOptions {
+  ingestResults?: Record<string, unknown>[];
   rescueJob?:boolean;
   rescuePlatforms?:Record<string,unknown>[];
   officialJob?: boolean;
@@ -67,7 +68,7 @@ function harness(options: HarnessOptions = {}) {
       ? new Response('quota exhausted', { status: options.geminiStatus })
       : json({ candidates: [{ content: { parts: [{ text: options.modelOutput ?? JSON.stringify({ offers: [candidate] }) }] } }], usageMetadata: { totalTokenCount: 100 } });
     if (url.includes('api.deepseek.com')) return json({ choices: [{ message: { content: options.modelOutput ?? JSON.stringify({ offers: [candidate] }) } }], usage: { total_tokens: 100, prompt_tokens: 80, completion_tokens: 20 } });
-    if (url.endsWith('/offers')) return json({ results: body.map((o: { id: string }) => ({ id: o.id, created: true, reviewState: 'pending' })) });
+    if (url.endsWith('/offers')) return json({ results: options.ingestResults ?? body.map((o: { id: string }) => ({ id: o.id, created: true, reviewState: 'pending' })) });
     if (url.endsWith('/status') || url.endsWith('/runs')) return json({ ok: true });
     if (url.includes('/verification-queue')) return options.verificationStatus
       ? new Response('verification queue unavailable', { status: options.verificationStatus }) : json({ offers: options.verification ?? [] });
@@ -391,4 +392,35 @@ it('blocks replacing a reset lead with a monthly plan even after paid fallback s
  const h=harness({leads:[{...lead,title:'Vendor Codex重置卡已发放'}]});
  const {runPipeline}=await import('../pipeline/run');await runPipeline();
  expect(h.payloads('/offers')).toHaveLength(0);
+});
+
+
+// phase1 regression: exercise the real intake caller, not a copied condition.
+describe('phase1 duplicate intake', () => {
+  it.each(['rejected', 'approved'])('resolves a duplicate of an %s offer without requeueing the lead', async state => {
+    const h = harness({ leads: [lead], ingestResults: [
+      { id: 'fresh-alias', duplicateId: 'vendor-canonical', skipped: `duplicate ${state}` },
+    ] });
+    const { runPipeline } = await import('../pipeline/run');
+    await runPipeline();
+    expect(h.payloads('/status')).toEqual([{ status: 'linked', offerId: 'vendor-canonical' }]);
+  });
+
+  it('does not turn an unidentified skip into a resolved lead', async () => {
+    const h = harness({ leads: [lead], ingestResults: [{ id: 'fresh-alias', skipped: 'needs identity verification' }] });
+    const { runPipeline } = await import('../pipeline/run');
+    await runPipeline();
+    expect(h.payloads('/status')[0].status).toBe('reviewing');
+  });
+
+  it('retains a partially failed lead even when another candidate is a resolved duplicate', async () => {
+    const other = { ...candidate, key: 'other-api', title: '另一项 API 赠送', valueText: '另一个独立积分池' };
+    const h = harness({ leads: [lead], modelOutput: JSON.stringify({ offers: [candidate, other] }), ingestResults: [
+      { id: 'alias', duplicateId: 'vendor-canonical', skipped: 'duplicate rejected' },
+      { id: 'other', error: 'write failed' },
+    ] });
+    const { runPipeline } = await import('../pipeline/run');
+    await runPipeline();
+    expect(h.payloads('/status')[0].status).toBe('reviewing');
+  });
 });
