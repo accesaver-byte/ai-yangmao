@@ -12,6 +12,18 @@ let beforeStatement: ((sql: string) => void) | undefined;
 
 function d1(memory: DatabaseSync) {
   return {
+    async batch(statements: { all(): Promise<unknown> }[]) {
+      memory.exec('BEGIN');
+      try {
+        const results: unknown[] = [];
+        for (const statement of statements) results.push(await statement.all());
+        memory.exec('COMMIT');
+        return results;
+      } catch (error) {
+        memory.exec('ROLLBACK');
+        throw error;
+      }
+    },
     prepare(sql: string) {
       let args: unknown[] = [];
       return {
@@ -22,7 +34,7 @@ function d1(memory: DatabaseSync) {
         async raw() { beforeStatement?.(sql); const statement = memory.prepare(sql); statement.setReturnArrays(true); return statement.all(...args as []); },
         async all() { beforeStatement?.(sql); return { results: memory.prepare(sql).all(...args as []) }; },
         async first() { return memory.prepare(sql).get(...args as []) ?? null; },
-        async run() { return { meta: memory.prepare(sql).run(...args as []), success: true }; },
+        async run() { beforeStatement?.(sql); return { meta: memory.prepare(sql).run(...args as []), success: true }; },
       };
     },
   } as unknown as D1Database;
@@ -34,7 +46,7 @@ async function call(path: string, body?: unknown, kind: 'ingest' | 'admin' = 'in
     headers: { Authorization: `Bearer audit-${kind}-token-long-enough`, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   }), env, {} as ExecutionContext);
-  return { status: response.status, body: await response.json() as Record<string, unknown> };
+  return { status: response.status, body: (response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : { error: await response.text() }) as Record<string, unknown> };
 }
 
 beforeEach(() => {
@@ -1232,4 +1244,114 @@ it('blocks scope bypass through ordinary ingestion and both automatic link endpo
  const result=await call('ingest/lead-reviews/2322/result',{jobId:lease.body.jobId,outcome:'linked',reason:'模型声称已收录',offerIds:[canonicalStudent.id],queries:[],candidates:[]});expect(result.status).toBe(400);
  expect(sqlite.prepare('SELECT status FROM leads WHERE id=2322').get()).toMatchObject({status:'reviewing'});
  expect(sqlite.prepare('SELECT count(*) n FROM offers').get()).toMatchObject({n:1});
+});
+
+
+// phase1 regression: actual Worker routes against the migration-backed SQLite harness.
+const phase1Offer = () => ({
+  id: 'vendor-phase1-quota', platformId: 'vendor', sourceId: 'source',
+  title: '常驻免费积分', type: 'standing', modalities: ['text'], models: [], tags: [],
+  claimMethod: 'signup', requirements: ['none'], audience: 'all',
+  valueText: '每天 100 积分', usdEstimate: null, usdMax: null,
+  claimStart: null, claimEnd: null, endKind: 'standing', creditValidity: null,
+  sourceTz: 'UTC', publishedAt: null, steps: [],
+  evidence: { url: 'https://vendor.example/free', tier: 'docs', capturedAt: '2026-10-10T00:00:00Z',
+    excerpts: { benefit: '100 credits every day.', eligibility: 'All users.', validity: 'No published end date.' } },
+});
+async function phase1Approved() {
+  const o = phase1Offer();
+  expect((await call('ingest/offers', [o])).status).toBe(200);
+  expect((await call(`admin/offers/${o.id}/approve`, {}, 'admin')).status).toBe(200);
+  return o;
+}
+async function phase1Proposal() {
+  const o = await phase1Approved();
+  const next = { ...o, valueText: '每天 200 积分', evidence: { ...o.evidence,
+    excerpts: { ...o.evidence.excerpts, benefit: '200 credits every day.' } } };
+  const result = await call('ingest/offers', [{ ...next, sourceText: Object.values(next.evidence.excerpts).join(' ') }]);
+  expect((result.body.results as any[])[0].reviewState).toBe('pending_update');
+  return o;
+}
+const phase1Count = (table: string) => Number((sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as any).n);
+
+describe('phase1 reviewed benefit facts', () => {
+  it.each([false, true])('proposes a same-number cadence change (administrator-edited baseline: %s)', async edited => {
+    const o = await phase1Approved();
+    if (edited) expect((await call(`admin/offers/${o.id}/edit`, { fields: { valueText: '每天 100 积分（已核对）' } }, 'admin')).status).toBe(200);
+    const previous = sqlite.prepare('SELECT value_text FROM offers WHERE id=?').get(o.id) as any;
+    const next = { ...o, valueText: '每月 100 积分', evidence: { ...o.evidence,
+      excerpts: { ...o.evidence.excerpts, benefit: '100 credits every month.' } } };
+    const result = await call('ingest/offers', [{ ...next, sourceText: Object.values(next.evidence.excerpts).join(' ') }]);
+    expect((result.body.results as any[])[0].reviewState).toBe('pending_update');
+    const proposal = sqlite.prepare('SELECT candidate,diff FROM offer_proposals WHERE offer_id=?').get(o.id) as any;
+    expect(JSON.parse(proposal.candidate).valueText).toBe('每月 100 积分');
+    expect(JSON.parse(proposal.diff)).toContainEqual({ field: 'valueText', from: previous.value_text, to: '每月 100 积分' });
+    expect(sqlite.prepare('SELECT value_text,review_state FROM offers WHERE id=?').get(o.id))
+      .toMatchObject({ value_text: previous.value_text, review_state: 'approved' });
+  });
+
+  it('does not reopen a mere rewrite with unchanged official source terms', async () => {
+    const o = await phase1Approved();
+    const result = await call('ingest/offers', [{ ...o, valueText: '每日赠予一百个积分', sourceText: Object.values(o.evidence.excerpts).join(' ') }]);
+    expect((result.body.results as any[])[0].unchanged).toBe(true);
+    expect(phase1Count('offer_proposals')).toBe(0);
+  });
+
+  it('keeps an actively edited manual proposal despite a later official benefit change', async () => {
+    const o = await phase1Proposal();
+    const manual = '管理员正在核对的新额度';
+    expect((await call(`admin/offers/${o.id}/edit`, { fields: { valueText: manual } }, 'admin')).status).toBe(200);
+    const next = { ...o, valueText: '每月 300 积分', evidence: { ...o.evidence,
+      excerpts: { ...o.evidence.excerpts, benefit: '300 credits every month.' } } };
+    await call('ingest/offers', [{ ...next, sourceText: Object.values(next.evidence.excerpts).join(' ') }]);
+    const proposal = sqlite.prepare('SELECT candidate FROM offer_proposals WHERE offer_id=?').get(o.id) as any;
+    expect(JSON.parse(proposal.candidate).valueText).toBe(manual);
+  });
+});
+
+describe('phase1 rejection transaction', () => {
+  it('does not remove a proposal after its approved baseline changes before rejection', async () => {
+    const o = await phase1Proposal();
+    beforeStatement = sql => {
+      if (!/INSERT INTO rejected_offer_updates/i.test(sql)) return;
+      beforeStatement = undefined;
+      sqlite.prepare('UPDATE offers SET updated_at=? WHERE id=?').run('2031-01-01T00:00:00Z', o.id);
+    };
+    const result = await call(`admin/offers/${o.id}/reject`, { reason: '不要此更新' }, 'admin');
+    expect(result.status).toBe(409);
+    expect(phase1Count('offer_proposals')).toBe(1);
+    expect(phase1Count('rejected_offer_updates')).toBe(0);
+    expect(sqlite.prepare("SELECT COUNT(*) AS n FROM reviews WHERE action='reject'").get()).toMatchObject({ n: 0 });
+  });
+
+  it('does not reject a replacement proposal with a newer version', async () => {
+    const o = await phase1Proposal();
+    beforeStatement = sql => {
+      if (!/INSERT INTO rejected_offer_updates/i.test(sql)) return;
+      beforeStatement = undefined;
+      sqlite.prepare('UPDATE offer_proposals SET updated_at=? WHERE offer_id=?').run('2031-01-01T00:00:00Z', o.id);
+    };
+    expect((await call(`admin/offers/${o.id}/reject`, {}, 'admin')).status).toBe(409);
+    expect(phase1Count('offer_proposals')).toBe(1);
+    expect(phase1Count('rejected_offer_updates')).toBe(0);
+  });
+
+  it('rolls back rejection memory and deletion when audit insertion fails', async () => {
+    const o = await phase1Proposal();
+    sqlite.exec("CREATE TRIGGER phase1_fail_audit BEFORE INSERT ON reviews WHEN NEW.action='reject' BEGIN SELECT RAISE(ABORT, 'phase1 audit unavailable'); END;");
+    expect((await call(`admin/offers/${o.id}/reject`, {}, 'admin')).status).toBe(500);
+    expect(phase1Count('offer_proposals')).toBe(1);
+    expect(phase1Count('rejected_offer_updates')).toBe(0);
+  });
+
+  it('records one rejection and one audit, removes only the proposal, and preserves the approved offer', async () => {
+    const o = await phase1Proposal();
+    expect((await call(`admin/offers/${o.id}/reject`, { reason: '已核对，拒绝这个版本', reasonCode: 'wrong_field' }, 'admin')).status).toBe(200);
+    expect(phase1Count('offer_proposals')).toBe(0);
+    expect(phase1Count('rejected_offer_updates')).toBe(1);
+    expect(sqlite.prepare("SELECT COUNT(*) AS n FROM reviews WHERE action='reject'").get()).toMatchObject({ n: 1 });
+    expect(sqlite.prepare('SELECT review_state,value_text FROM offers WHERE id=?').get(o.id)).toMatchObject({ review_state: 'approved', value_text: o.valueText });
+    expect((await call(`admin/offers/${o.id}/reject`, {}, 'admin')).status).toBe(409);
+    expect(phase1Count('rejected_offer_updates')).toBe(1);
+  });
 });
