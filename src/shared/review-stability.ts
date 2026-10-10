@@ -81,3 +81,12 @@ export function rejectedTermsStillPresent(rejected: Evidence, incoming: Evidence
   }
   return anchored;
 }
+
+/** Reuse the grounded source-change gate for benefit facts, excluding unrelated eligibility/date changes. */
+export function changedOfficialBenefit(before: Evidence, after: Evidence, sourceText?: string): boolean {
+  return changedOfficialTerms(
+    { ...before, excerpts: { benefit: before.excerpts.benefit } },
+    { ...after, excerpts: { benefit: after.excerpts.benefit } },
+    sourceText,
+  );
+}

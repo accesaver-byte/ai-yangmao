@@ -243,19 +243,34 @@ admin.post('/offers/:ref/:action{approve|reject}', async c => {
       await d.insert(s.offerRevisions).values({ offerId: o.id, diff: proposal.diff, evidenceBefore: o.evidence, evidenceAfter: candidate.evidence });
     }
     if (action === 'reject') {
-      // Save the rejected source terms before removing the queue item, guarded by its exact version.
-      await c.env.DB.prepare(`INSERT INTO rejected_offer_updates(offer_id,evidence,diff)
-        SELECT offer_id,?,diff FROM offer_proposals WHERE offer_id=? AND updated_at=?
-        AND EXISTS(SELECT 1 FROM offers WHERE id=? AND updated_at=? AND review_state='approved')`)
-        .bind(JSON.stringify(proposal.candidate.evidence ?? o.evidence),o.id,proposal.updatedAt,o.id,o.updatedAt).run();
+      // D1 batch is transactional. A zero-row version guard must also make audit/delete no-ops.
+      // A fresh decision key ties subsequent writes to THIS successful insertion, not an older rejection.
+      const decisionKey = crypto.randomUUID();
+      const rejected = await c.env.DB.batch<{ id: number | string }>([
+        c.env.DB.prepare(`INSERT INTO rejected_offer_updates(offer_id,evidence,diff,at,decision_key)
+          SELECT offer_id,?,diff,?,? FROM offer_proposals WHERE offer_id=? AND updated_at=?
+          AND EXISTS(SELECT 1 FROM offers WHERE id=? AND updated_at=? AND review_state='approved')
+          RETURNING id`)
+          .bind(JSON.stringify(proposal.candidate.evidence ?? o.evidence),nowIso,decisionKey,o.id,proposal.updatedAt,o.id,o.updatedAt),
+        c.env.DB.prepare(`INSERT INTO reviews(offer_id,action,reviewer,reason,reason_code,at)
+          SELECT ?,'reject',?,?,?,? WHERE EXISTS(SELECT 1 FROM rejected_offer_updates WHERE decision_key=?) RETURNING id`)
+          .bind(o.id,c.get('who'),body.reason ?? null,body.reasonCode ?? null,nowIso,decisionKey),
+        c.env.DB.prepare(`DELETE FROM offer_proposals WHERE offer_id=? AND updated_at=?
+          AND EXISTS(SELECT 1 FROM rejected_offer_updates WHERE decision_key=?) RETURNING offer_id AS id`)
+          .bind(o.id,proposal.updatedAt,decisionKey),
+      ]);
+      if (!rejected[0].results.length || !rejected[2].results.length) return c.json({error:'条目或提案已更新，请刷新后重试'},409);
+    } else {
+      await d.delete(s.offerProposals).where(and(eq(s.offerProposals.offerId,o.id),eq(s.offerProposals.updatedAt,proposal.updatedAt)));
     }
-    const removed = await d.delete(s.offerProposals).where(and(eq(s.offerProposals.offerId,o.id),eq(s.offerProposals.updatedAt,proposal.updatedAt))).returning({id:s.offerProposals.offerId});
-    if (!removed.length && action==='reject') return c.json({error:'提案已更新，请刷新后重试'},409);
   } else {
     const changed = await d.update(s.offers).set({ reviewState: action === 'approve' ? 'approved' : 'rejected', ...(action === 'approve' ? { lastVerifiedAt: nowIso, verifyResult: '审核员确认官方证据' } : {}), updatedAt: nowIso }).where(and(eq(s.offers.id, o.id), eq(s.offers.reviewState, 'pending'), eq(s.offers.updatedAt,o.updatedAt))).returning({id:s.offers.id});
     if (!changed.length) return c.json({error:'这条活动已被更新或处理，请刷新后重试'},409);
   }
-  await d.insert(s.reviews).values({ offerId: o.id, action, reviewer: c.get('who'), reason: body.reason ?? null, reasonCode: body.reasonCode ?? null });
+  // Proposal rejection already wrote its audit in the same transaction as memory and deletion.
+  if (!(proposal && o.reviewState === 'approved' && action === 'reject')) {
+    await d.insert(s.reviews).values({ offerId: o.id, action, reviewer: c.get('who'), reason: body.reason ?? null, reasonCode: body.reasonCode ?? null });
+  }
   let streak: number | null = null;
   if (o.sourceId) {
     const [src] = await d.select().from(s.sources).where(eq(s.sources.id, o.sourceId));

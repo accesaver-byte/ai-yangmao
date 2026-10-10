@@ -333,7 +333,7 @@ async function triageLeads(plats: Plat[]) {
     if (DRY) { log(`  #${l.id} ${l.title?.slice(0, 40)} → ${valid.map(v => `${v.platformId}:${v.title}`).join('、') || '无'}${unknown.length ? `；白名单外：${unknown.join('、')}` : ''}`); continue; }
     if (valid.length) {
       let res;
-      try { res = await api<{ results: { id: string; error?: string; skipped?: string; unchanged?: boolean }[] }>('/offers', valid); }
+      try { res = await api<{ results: { id: string; error?: string; skipped?: string; duplicateId?: string; unchanged?: boolean }[] }>('/offers', valid); }
       catch (e) {
         stats.errors.push(`线索 #${l.id} 入库失败`);
         await api(`/leads/${l.id}/status`, { status: 'reviewing', note: `入库失败，需人工处理：${(e as Error).message.slice(0,350)}` });
@@ -354,7 +354,12 @@ async function triageLeads(plats: Plat[]) {
       }
       existing = formatOfferIndex(known);
       log(`  #${l.id} → ${valid.map(v => v.title).join('、')}`);
-      const saved = res.results.filter(x => !x.error && !('skipped' in x));
+      // A known duplicate is a resolved candidate, not a failed write. Keep unknown skips/errors retryable.
+      const saved = res.results.flatMap(x => {
+        if (x.error) return [];
+        if (x.duplicateId) return [{ ...x, id: x.duplicateId }];
+        return 'skipped' in x ? [] : [x];
+      });
       if (!saved.length || saved.length < valid.length || invalidCount || unknown.length) {
         await api(`/leads/${l.id}/status`, { status: 'reviewing', note: '部分或全部条目未成功入库，需人工处理：' + res.results.map(x => x.error ?? ('skipped' in x ? String(x.skipped) : x.id)).join('；').slice(0, 350) });
       } else {

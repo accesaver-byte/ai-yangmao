@@ -5,7 +5,7 @@ import { sameBenefit, ambiguousReset } from '../shared/dedupe';
 import { officialTier, officialActivityMismatch } from '../shared/official-review';
 import { resetEventDay } from '../shared/reset-event';
 import { selectLeads } from '../shared/leads';
-import { changedOfficialTerms, rejectedTermsStillPresent } from '../shared/review-stability';
+import { changedOfficialTerms, changedOfficialBenefit, rejectedTermsStillPresent } from '../shared/review-stability';
 import { publicSafeValuation, valuationMatchesAmounts } from '../shared/valuation';
 import { isReviewField, reviewChanges } from '../shared/spec';
 // Cloudflare Worker 入口：/api/* 走这里，其余由静态资源（网站页面）处理。
@@ -294,19 +294,14 @@ ingest.post('/offers', async c => {
         ...(existingProposal?.manualFields ?? []),
       ]);
       // 人工改过的字段一律保留（2026-10-03）：原先“摘录变了就放开”的例外让模型每次换一句摘录就能改掉管理员确认过的内容。
-      // 官方条款真变了，由日期、类型、门槛、美元、免费模型或额度数字的变化触发提案，管理员再改。
-      const factNumbers = (t: string) => (t.normalize('NFKC').match(/\d[\d,.]*/g) ?? []).map(x => x.replace(/,/g, '')).sort().join('|');
-      const excerptChanged = (['benefit', 'eligibility', 'validity'] as const).some(key => {
-        const before = prev.evidence.excerpts[key]?.replace(/\s+/g, ' ').trim();
-        const after = o.evidence.excerpts[key]?.replace(/\s+/g, ' ').trim();
-        return !!before && !!after && before !== after;
-      });
+      // Grounded replacement of benefit facts can update the proposed wording, even when digits stay the same.
+      const benefitChanged = changedOfficialBenefit(prev.evidence, o.evidence, o.sourceText);
       for (const field of protectedFields) {
         // A proven replacement of official terms needs its new evidence approved with the new facts.
         if (prev.reviewState === 'approved' && field === 'evidence' && !existingProposal?.manualFields.includes(field)
           && changedOfficialTerms(prev.evidence, o.evidence, o.sourceText)) continue;
-        // 唯一例外：官方原文变了、额度里的数字也变了，额度文字可以进提案（仍不直接覆盖）
-        if (prev.reviewState === 'approved' && field === 'valueText' && excerptChanged && factNumbers(o.valueText) !== factNumbers(prev.valueText) && !existingProposal?.manualFields.includes(field)) continue;
+        // Only proven benefit changes may replace an old edit; an active manual proposal always wins.
+        if (prev.reviewState === 'approved' && field === 'valueText' && benefitChanged && !existingProposal?.manualFields.includes(field)) continue;
         if (field in row) (row as Record<string, unknown>)[field] = existingProposal?.manualFields.includes(field)
           ? existingProposal.candidate[field] : (prev as Record<string, unknown>)[field];
       }
@@ -341,8 +336,8 @@ ingest.post('/offers', async c => {
       row.title = prev.title; row.modalities = prev.modalities as typeof row.modalities; row.sourceTz = prev.sourceTz;
       row.claimMethod = prev.claimMethod; row.audience = prev.audience;
       if (prev.publishedAt) row.publishedAt = prev.publishedAt;
-      const numbers = (t: string) => (t.normalize('NFKC').match(/\d[\d,.]*/g) ?? []).map(x => x.replace(/,/g, '')).sort().join('|');
-      if (numbers(row.valueText) === numbers(prev.valueText)) row.valueText = prev.valueText;
+      // Equal digits do not mean equal benefits (100/day and 100/month differ).
+      if (!changedOfficialBenefit(prev.evidence, o.evidence, o.sourceText)) row.valueText = prev.valueText;
       row.sourceId = prev.sourceId;
       // 新提案也不能因模型漏摘录丢掉已审核证据。
       if (row.evidence.url === prev.evidence.url) {
