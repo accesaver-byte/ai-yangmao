@@ -1,0 +1,42 @@
+name: Phase 1 isolated validation
+on:
+  push:
+    branches: ['fix/dedupe-review-stability-20261010']
+    paths: ['.review-bootstrap.py', '.github/workflows/phase1-review-validation.yml']
+permissions:
+  contents: read
+jobs:
+  regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: mkdir -p /tmp/phase1-validation && npm ci
+      - name: Baseline typecheck and complete suite
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee /tmp/phase1-validation/baseline-typecheck.log
+          npm test 2>&1 | tee /tmp/phase1-validation/baseline-tests.log
+      - name: Add and run regression tests before applying fixes
+        shell: bash
+        run: |
+          python3 .review-bootstrap.py tests
+          set +e
+          npx vitest run tests/pipeline-workflow.test.ts tests/verification.test.ts > /tmp/phase1-validation/red-tests.log 2>&1
+          code=$?
+          set -e
+          cat /tmp/phase1-validation/red-tests.log
+          test "$code" -ne 0
+          grep -q 'AssertionError' /tmp/phase1-validation/red-tests.log
+          git diff --stat
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase1-red-validation
+          path: /tmp/phase1-validation/
+          retention-days: 14
