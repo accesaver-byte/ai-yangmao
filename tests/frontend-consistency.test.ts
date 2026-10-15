@@ -143,6 +143,6 @@ describe('homepage intro', () => {
   it('uses the same descriptor in the browser tab and link previews', () => {
     expect(css).toContain('<title>AI 羊毛牧场 · 免费 AI 额度与大模型 Token 福利汇总</title>');
     expect(css).toContain('<meta property="og:title" content="AI 羊毛牧场 · 免费 AI 额度与大模型 Token 福利汇总">');
-    expect(readFileSync('web/build.sh', 'utf8')).toContain('免费大模型 Token、API 额度、会员和生图生视频次数，每天汇总，条条可追官方出处。');
+    expect(readFileSync('scripts/build-web.mjs', 'utf8')).toContain('免费大模型 Token、API 额度、会员和生图生视频次数，每天汇总，条条可追官方出处。');
   });
 });

@@ -42,6 +42,10 @@ describe('模型字段取值不合规时不丢整条', () => {
 import { readFileSync } from 'node:fs';
 import { parsePlatformNotes, platformNotesFor } from '../pipeline/llm';
 describe('平台抽取要点', () => {
+  it('Windows 换行符不丢失平台规则', () => {
+    const notes = parsePlatformNotes('## workbuddy\r\n- 第一条\r\n- 第二条\r\n');
+    expect(notes.get('workbuddy')).toEqual(['第一条', '第二条']);
+  });
   it('按平台 id 解析，只附上相关平台的要点', () => {
     const notes = parsePlatformNotes('# 标题\n说明\n## hf\n- 免费 $0.10 仅限 Inference Providers\n## opencode\n- 分三条\n- Go 价值 $10–60\n');
     expect(notes.get('opencode')).toEqual(['分三条', 'Go 价值 $10–60']);

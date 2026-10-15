@@ -4,6 +4,10 @@
 
 ## 现役文档
 
+本地启动、演示数据和 Windows 开发说明见 [本地开发](local-development.md)。
+
+Fork 同步、独立分支、PR 与正式发布边界见 [协作流程](collaboration.md)。
+
 | 要解决的问题 | 权威入口 |
 |---|---|
 | 字段含义、展示影响、审核与提案边界 | [数据合同](data-contract.md) |

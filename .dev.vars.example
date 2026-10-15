@@ -1,0 +1,5 @@
+# 仅供绑定 127.0.0.1 的本地开发，禁止用于线上。
+ADMIN_TOKEN=local-development-admin-only
+INGEST_TOKEN=local-development-ingest-only
+IDENTITY_MODE=off
+SCREENING_MODE=off
