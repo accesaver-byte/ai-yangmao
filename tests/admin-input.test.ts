@@ -22,6 +22,7 @@ async function pageFixture() {
     }});
   // Run the real frontend and handlers, without the network-driven boot screen.
   const app=readFileSync('web/src/app.js','utf8');
+  runInContext(readFileSync('web/src/urgent-review.js','utf8'),context);
   runInContext(readFileSync('web/src/data.js','utf8')+'\n'+readFileSync('web/src/membership.js','utf8')+'\n'+app.slice(0,app.indexOf('(async function boot()')),context);
   await runInContext("ADM.token='fixture'; ADM.role='admin'; PLATFORMS=[{id:'vendor',name:'Vendor',type:'lab'}]; admQueue()",context);
   return {document,window,context,writes,timers,requests};

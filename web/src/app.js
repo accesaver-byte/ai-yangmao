@@ -404,6 +404,10 @@ function baseOpt() {
 function chart(el, opt, set = CHARTS) {
   if (typeof el === 'string') el = $(el);
   if (!el) return null;
+  if (!window.echarts) {
+    el.innerHTML = '<p class="muted small" role="status">图表暂时不可用，活动列表和详情仍可浏览。</p>';
+    return null;
+  }
   const c = echarts.init(el, null, { renderer: 'svg' });
   const b = baseOpt();
   if (opt.tooltip) opt.tooltip = Object.assign({}, b.tooltip, opt.tooltip);
@@ -750,7 +754,7 @@ function pCalendar() {
   $('#pickDate').addEventListener('change', e => { if (e.target.value) { CAL.sel = e.target.value; drawMonths(months); renderDayList(); } });
 }
 function drawMonths(months) {
-  $$('.month .chart').forEach(el => { const c = echarts.getInstanceByDom(el); if (c) { CHARTS.delete(c); c.dispose(); } });
+  $$('.month .chart').forEach(el => { const c = window.echarts?.getInstanceByDom(el); if (c) { CHARTS.delete(c); c.dispose(); } });
   const all = [];
   months.forEach(m => { const days = new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate(); for (let d = 1; d <= days; d++) all.push(dayStats(dayIdx(new Date(m.getFullYear(), m.getMonth(), d)))); });
   const metric = s => CAL.metric === 'count' ? s.n : s.list.some(o => valueGroup(o) === CAL.metric && valueNumber(o) != null) ? s.values[CAL.metric] : null;
@@ -1620,6 +1624,10 @@ function pValuationMethod() {
 
 /* ---------- 覆盖范围 ---------- */
 function pCoverage() {
+  if (!COVERAGE) {
+    main().innerHTML = ribbon() + ph('覆盖范围', '我们在看哪些地方、还有哪些看不到。') + '<p class="muted" role="status">覆盖信息尚未加载，稍后可刷新重试；活动列表和详情仍可浏览。</p>';
+    return;
+  }
   const cv = COVERAGE || { platforms: PLATFORMS.length, sources: 0, byKind: {}, officialPages: [] };
   const K = { web_list: ['官网页面 / 帮助文档', '每 6 小时，只看羊毛相关句子是否变化'], rss: ['官方 RSS', '每 6 小时'], json: ['官方接口', '每 6 小时'], aihot: ['AIHOT 公开接口', '每小时，含 Codex 重置与赠额'], hn: ['Hacker News', '线索，每 6 小时'], reddit: ['Reddit', '线索，由常开机器中继'], email: ['订阅邮箱', '计划中'], manual: ['补录', '通过 Hermes 转发链接'], sweep: ['周六发现扫描', '计划中'], discord: ['Discord 公告频道', '计划中'] };
   const rows = Object.entries(cv.byKind || {}).map(([k, v]) => [K[k] ? K[k][0] : k, K[k] ? K[k][1] : '', `${v.enabled} 个`, v.failing ? stBadge('warn', '!', `${v.failing} 个连续失败`) : stBadge('good', '✓', '正常')]);
@@ -2082,6 +2090,8 @@ async function admQueue() {
     ${q.needsVerification?.length ? `<details data-stale-approved><summary>已批准 · 待核验 ${q.needsVerification.length} 项</summary><p class="small muted">以前的通过决定仍保留。这些活动暂不算当前可领：可能是官方原文改写、页面暂不可读，或距离上次成功核验过久。请核对官网后修订证据；不要重新批准原条目，也不要仅凭待核验判断已经结束。</p><div data-stale-body class="grid g2"></div><button type="button" class="btn sm" data-stale-more hidden>加载更多待核验活动</button></details>` : ''}
     <section data-activity-section><h3>活动待审</h3><p class="small muted">证据充分后再由你决定。系统补证、模型建议都不会自动通过上架。</p><h4>等待你决定 · ${readyCards.length} 项</h4><div class="grid g2">${readyCards.map(o=>card(o)).join('')||'<p class="small muted">当前没有资料齐备的活动需要你决定。</p>'}</div>${evidenceCards.length?`<details data-system-evidence open><summary>系统补证 / 补证受阻 · ${evidenceCards.length} 项</summary><div class="grid g2">${evidenceCards.map(o=>card(o)).join('')}</div></details>`:''}<div data-identity-slot></div></section>
     ${q.incomplete?.length ? `<section><details data-incomplete><summary style="cursor:pointer">${secH('已上架、字段待补', `${q.incomplete.length} 条：补齐后日历、时间线、按模型找、价值统计等栏目才完整`)}</summary><div class="grid g2" data-incomplete-body></div></details></section>` : ''}`;
+  box.insertAdjacentHTML('afterbegin', urgentReviewHtml(q));
+  bindUrgentReview(box, q);
   const identityBox=box.querySelector('[data-identity-slot]');identityBox.dataset.identityReview='';const remainingTasks=(identity.tasks||[]).filter(t=>!managedIds.has(t.id));if(remainingTasks.length||identity.error||identity.nextCursor)renderIdentityTasks(identityBox,{...identity,tasks:remainingTasks},false,managedIds);
   const pausedSection=document.createElement('details');pausedSection.dataset.pausedSection='';pausedSection.innerHTML=`<summary>暂停发布 · ${counts.paused} 项（无需日常处理）</summary>`;const holdsBox=document.createElement('section');pausedSection.append(holdsBox);box.append(pausedSection);renderVisibilityHolds(holdsBox,holds);if(holds.error)holdsBox.textContent='暂停活动读取失败：'+holds.error;
   bindLeadTasks(box,q.leadTasks||[]);
@@ -2681,6 +2691,7 @@ async function refreshPage() {
   finally { refreshInFlight = false; }
 }
 setInterval(() => {
+  updateUrgentClocks();
   if (document.hidden || keepPage()) return;
   const now = Date.now();
   $$('[data-end]').forEach(el => { el.textContent = cdText(+el.dataset.end - now); });
@@ -2721,11 +2732,18 @@ new MutationObserver(reTheme).observe(document.documentElement, { attributes: tr
   const agentLanding = route()[0] === 'agent';
   if (agentLanding) render(false);
   else { main().innerHTML = emptySheep('正在把羊赶进草地…'); DATA_LOADING = true; }
-  try { await Promise.all([loadData(), restoreAdminRole()]); }
+  try {
+    const [data] = await Promise.all([loadData({ deferExtras: true, onSupplement: () => {
+      if (DATA_LOADING) return;
+      prepare();
+      // 保留正在编辑的表单和打开的浮层，下一次正常重绘会使用新数据。
+      if (!keepPage() && $('#sheet').hidden) { drawShell(); render(true); }
+    } }), restoreAdminRole()]);
+    data.supplements.catch(() => { /* 附加信息不阻断已加载的活动 */ });
+  }
   catch (e) { DATA_LOADING = false; if (route()[0] !== 'agent') main().innerHTML = emptySheep('数据没有加载成功，请稍后刷新。'); return; }
   DATA_LOADING = false;
   prepare();
   drawShell();
-  if (window.echarts) render(false);
-  else main().innerHTML = ribbon() + emptySheep('图表库没有加载成功，请检查网络后刷新。');
+  render(false);
 })();

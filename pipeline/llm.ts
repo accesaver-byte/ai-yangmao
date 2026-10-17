@@ -104,7 +104,7 @@ import type { PlatformProfile } from '../src/shared/screening/types';
 export function parsePlatformNotes(md: string): Map<string, string[]> {
   const notes = new Map<string, string[]>();
   let cur: string | null = null;
-  for (const line of md.split('\n')) {
+  for (const line of md.split(/\r?\n/)) {
     const h = line.match(/^##\s+([a-z0-9][a-z0-9-]*)\s*$/);
     if (h) { cur = h[1]; notes.set(cur, []); continue; }
     const b = line.match(/^\s*-\s+(.+)$/);

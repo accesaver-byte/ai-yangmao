@@ -18,6 +18,8 @@ export function fixture(handle: (url: string, init?: RequestInit) => unknown | P
     fetch: async (url: string, init?: RequestInit) => new Response(JSON.stringify(url.endsWith('/memberships') ? {revision:0,products:[],plans:[]} : await handle(url, init))),
   });
   const app = readFileSync('web/src/app.js', 'utf8');
+  runInContext('window.echarts = echarts;', context);
+  runInContext(readFileSync('web/src/urgent-review.js', 'utf8'), context);
   runInContext(readFileSync('web/src/data.js', 'utf8') + '\n' + readFileSync('web/src/membership.js', 'utf8') + '\n' + app.slice(0, app.indexOf('(async function boot()')), context);
   const run = (code: string) => runInContext(code, context);
   run("PLATFORMS=[{id:'vendor',name:'Vendor',type:'lab'}];ADM.token='fixture';ADM.role='admin';");
