@@ -14,7 +14,7 @@ mkdir -p public/vendor
 } > public/index.html
 node --input-type=module -e 'import { build } from "esbuild"; await build({entryPoints:["src/shared/membership.ts"],bundle:true,format:"iife",globalName:"YMMembership",platform:"browser",outfile:"public/membership-core.js"});'
 node --input-type=module -e 'import { build } from "esbuild"; await build({entryPoints:["src/shared/model-names.ts"],bundle:true,format:"iife",globalName:"YMModels",platform:"browser",outfile:"public/model-names.js"});'
-cat web/src/data.js web/src/membership.js web/src/app.js > public/app.js
+cat web/src/data.js web/src/membership.js web/src/urgent-review.js web/src/app.js > public/app.js
 cp node_modules/echarts/dist/echarts.min.js public/vendor/echarts.min.js
 cp web/_headers public/_headers
 cp web/src/theme.js public/theme.js

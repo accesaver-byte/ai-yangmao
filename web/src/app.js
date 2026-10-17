@@ -2321,6 +2321,8 @@ async function admQueue() {
     ${q.incomplete?.length ? `<section data-live-section><details data-incomplete><summary style="cursor:pointer">字段待补 · ${q.incomplete.length}</summary><div class="grid g2" data-incomplete-body></div></details></section>` : ''}`;
   const selectWorkspace=reviewWorkspace(box,q,counts);
   const identityBox=box.querySelector('[data-identity-slot]');identityBox.dataset.identityReview='';const remainingTasks=(identity.tasks||[]).filter(t=>!managedIds.has(t.id));if(remainingTasks.length||identity.error||identity.nextCursor)renderIdentityTasks(identityBox,{...identity,tasks:remainingTasks},false,managedIds);
+  box.insertAdjacentHTML('afterbegin', urgentReviewHtml(q));
+  bindUrgentReview(box, q);
   bindLeadTasks(box,q.leadTasks||[]);
   box.querySelectorAll('[data-lead-task]').forEach(card=>{const l=q.leadTasks.find(l=>String(l.id)===card.dataset.leadTask);compactReviewCard(card,{title:l.title,url:l.url,status:({checking:'核验中',retry:'等待重试',manual:'需要判断'})[l.resolution?.status]||'待复核',action:'复核线索',facts:[['待处理',l.note],['下次重试',l.resolution?.nextAttemptAt]]});});
   box.querySelectorAll('[data-priority-lead]').forEach(el=>{const lead=(q.priorityLeads||[]).find(l=>String(l.id)===el.dataset.priorityLead);el.querySelector('[data-priority-fast]')?.addEventListener('click',()=>openFastTrackForm({benefit:String(lead.title||'').slice(0,500),url:lead.url||''},lead.id));});
@@ -2976,6 +2978,7 @@ async function refreshPage() {
   finally { refreshInFlight = false; }
 }
 setInterval(() => {
+  updateUrgentClocks();
   if (document.hidden || keepPage()) return;
   const now = Date.now();
   $$('[data-end]').forEach(el => { el.textContent = cdText(+el.dataset.end - now); });
