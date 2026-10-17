@@ -281,7 +281,7 @@ describe('frontend review workflow', () => {
   });
   it('shows an approved dated offer through its deadline even when an old probe failed', () => {
     const page = fixture(() => ({}));
-    publicOffer(page.run, { ty: 'free', ek: 'date', e: 2, verify: 'evidence_missing', verifiedAt: '2025-01-01T00:00:00Z' });
+    publicOffer(page.run, { ty: 'free', ek: 'date', e: 2, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, verify: 'evidence_missing', verifiedAt: '2025-01-01T00:00:00Z' });
     expect(page.run("statusOf(OFFERS[0])")).toBe('ending');
     page.run("Object.assign(OFFERS[0],{e:-1});prepare()");
     expect(page.run("statusOf(OFFERS[0])")).toBe('ended');

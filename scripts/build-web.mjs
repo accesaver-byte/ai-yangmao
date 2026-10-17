@@ -10,7 +10,7 @@ const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><met
   + '<meta name="description" content="免费大模型 Token、API 额度、会员和生图生视频次数，每天汇总，条条可追官方出处。">\n'
   + await readFile('web/src/head.html', 'utf8') + '</head><body>\n'
   + await readFile('web/src/body.html', 'utf8')
-  + '<script src="/vendor/echarts.min.js"></script><script src="/membership-core.js"></script><script src="/app.js"></script></body></html>\n';
+  + '<script src="/initial-data.js"></script><script src="/vendor/echarts.min.js"></script><script src="/membership-core.js"></script><script src="/app.js"></script></body></html>\n';
 await writeFile('public/index.html', html);
 await build({ entryPoints: ['src/shared/membership.ts'], bundle: true, format: 'iife', globalName: 'YMMembership', platform: 'browser', outfile: 'public/membership-core.js' });
 await writeFile('public/app.js', (await Promise.all(['data', 'membership', 'urgent-review', 'app'].map(name => readFile(`web/src/${name}.js`, 'utf8')))).join('\n'));
@@ -18,7 +18,8 @@ await Promise.all([
   copyFile('node_modules/echarts/dist/echarts.min.js', 'public/vendor/echarts.min.js'),
   copyFile('web/_headers', 'public/_headers'),
   copyFile('web/src/theme.js', 'public/theme.js'),
+  copyFile('web/src/initial-data.js', 'public/initial-data.js'),
 ]);
 await import('./build-public-skill.mjs');
-for (const file of ['public/theme.js', 'public/app.js']) execFileSync(process.execPath, ['--check', file], { stdio: 'inherit' });
+for (const file of ['public/theme.js', 'public/initial-data.js', 'public/app.js']) execFileSync(process.execPath, ['--check', file], { stdio: 'inherit' });
 console.log(`built public/index.html (${Buffer.byteLength(html)} bytes)`);
