@@ -54,7 +54,7 @@ async function loadData({ fresh = false } = {}) {
   const now = Date.now(), DAYMS = 864e5;
   const t0 = new Date(); t0.setHours(0, 0, 0, 0);
   const rel = d => (d ? Math.round((new Date(d + 'T00:00:00') - t0) / DAYMS) : null);
-  PLATFORMS = pl.platforms.map(p => ({ id: p.id, name: p.name, type: p.type, site: p.site || '', x: (p.xHandles || []).join(' · ') }));
+  PLATFORMS = pl.platforms.map(p => ({ id: p.id, name: p.name, type: p.type, site: p.site || '', x: (p.xHandles || []).join(' · '), company: p.company || '', aliases: p.aliases || [] }));
   OFFERS = of.offers.map(o => {
     const overseas = o.requirements.some(r => ['phone', 'card', 'net'].includes(r.split(':')[0]));
     return {

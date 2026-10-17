@@ -86,7 +86,29 @@ export function syndicatedPostText(url:string,payload:unknown):string|null {
  * 1. 直接抓取，Readability 正文和整页纯文本里，取羊毛相关内容更多的那个（Readability 有时会丢掉定价说明）；
  * 2. 字数仍然太少（多半是脚本渲染的页面），改用 Jina Reader，要 Markdown 格式以保留表格结构。
  */
-export interface FetchedPage {sourceVerified?:boolean;text:string;via:'readability'|'direct'|'jina';originalUrl?:string;finalUrl:string;fetchedUrl?:string;fetchMethod?:'direct'|'readability'|'jina'|'first_party_embed';truncated?:boolean}
+/** via 表示读取方式类别：jina 指第三方阅读器（含 Exa），一律按间接来源处理；fetchMethod 记录实际读取方。 */
+export interface FetchedPage {sourceVerified?:boolean;text:string;via:'readability'|'direct'|'jina';originalUrl?:string;finalUrl:string;fetchedUrl?:string;fetchMethod?:'direct'|'readability'|'jina'|'exa'|'first_party_embed';truncated?:boolean}
+// 微信对自动访问返回的拦截页有多种：“环境异常 / 去验证”验证页，以及只有页面框架的“微信扫一扫可打开此内容，使用完整服务”（2026-10-16 CodeBuddy 公告）。
+const WECHAT_BLOCKED = /环境异常|完成验证后即可继续访问|去验证|微信扫一扫可打开此内容|使用完整服务/;
+/** 公众号页面是拦截页而不是正文。不按字数判断：补偿公告这类真文章可能只有三百来字。 */
+export const wechatBlocked = (text: string) => WECHAT_BLOCKED.test(text);
+const isWechat = (url: string) => { try { return new URL(url).hostname === 'mp.weixin.qq.com'; } catch { return false; } };
+/** Exa /contents（build-with-exa：contents 端点的 text 是顶层字段）。返回第三方阅读器结果，按间接来源处理；读不到或仍是验证页时返回 null。 */
+export async function exaContents(url: string, timeoutMs = 30000): Promise<FetchedPage | null> {
+  const key = process.env.EXA_API_KEY;
+  if (!key) return null;
+  try {
+    const r = await fetch('https://api.exa.ai/contents', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': key }, body: JSON.stringify({ urls: [url], text: true }), signal: AbortSignal.timeout(timeoutMs) });
+    if (!r.ok) return null;
+    const j = await r.json() as { results?: { url?: string; title?: string; author?: string; text?: string }[] };
+    const hit = j.results?.[0];
+    const body = hit?.text?.trim() ?? '';
+    if (!hit || wechatBlocked(body)) return null;
+    const text = [hit.title, hit.author ? `公众号：${hit.author}` : '', body].filter(Boolean).join('\n');
+    return { text, via: 'jina', originalUrl: url, finalUrl: url, fetchedUrl: 'https://api.exa.ai/contents', fetchMethod: 'exa', truncated: false, sourceVerified: hit.url === url };
+  } catch { return null; }
+}
+
 export async function fetchPage(url: string, opts: { timeoutMs?: number; tries?: number; minimumTextLength?: number } = {}): Promise<FetchedPage> {
   assertSafeUrl(url);
   const status=officialStatusKey(url);
@@ -109,7 +131,9 @@ export async function fetchPage(url: string, opts: { timeoutMs?: number; tries?:
     // 哪个版本保留的羊毛相关内容多就用哪个；一样多时用更干净的 Readability
     if (read.length >= 800 && relevantText(read).length >= relevantText(full).length) { text = read; via = 'readability'; } else text = full;
   } catch { /* 直接抓失败就走 Jina */ }
-  if (text.length >= (opts.minimumTextLength ?? 800)) return { text, via, originalUrl:url,finalUrl,fetchedUrl:finalUrl,fetchMethod:via,truncated:false,sourceVerified:true };
+  if (text.length >= (opts.minimumTextLength ?? 800) && !(isWechat(url) && wechatBlocked(text))) return { text, via, originalUrl:url,finalUrl,fetchedUrl:finalUrl,fetchMethod:via,truncated:false,sourceVerified:true };
+  // 微信公众号文章：云端直读与 Jina 都会遇到验证页（“环境异常”），改用 Exa 从其服务器读取正文（2026-10-16）。
+  if (isWechat(url)) { const exa = await exaContents(url, opts.timeoutMs ?? 30000); if (exa) return exa; }
   const headers: Record<string, string> = { 'User-Agent': UA, 'X-Return-Format': 'markdown', Accept: 'text/plain', 'X-Locale': 'en-US' };
   if (process.env.JINA_API_KEY) headers.Authorization = `Bearer ${process.env.JINA_API_KEY}`;
   const res = await fetch(`https://r.jina.ai/${url}`, { headers, signal: AbortSignal.timeout(opts.timeoutMs ?? 60000) });
@@ -126,7 +150,26 @@ export async function fetchPage(url: string, opts: { timeoutMs?: number; tries?:
 // LEAD 用于第三方线索（AIHOT / HN / Reddit）的标题，要求明确的搭配，避免 credit agreement 这类误判。
 // 多模态平台的福利大多用积分、灵感值、点数表述，还有每日登录送、邀请奖励、实名认证礼、首月折扣（2026-10-01 漏抓排查后补充）
 export const FREEBIE = /(免费|赠送|额度|限免|重置|体验金|代金券|优惠券|新人|新用户|充值.{0,6}送|福利|积分|灵感值|点数|算力值|登录.{0,4}(送|领|赠)|每[日天].{0,8}(送|领|赠|刷新|重置|补)|邀请|推荐官|实名认证|首月|[1-9]折|折扣|\d+\s*%\s*off|discount|referral|invite|daily\s+(credits?|points?)|points?\s+(per|a|each)\s+day|\bfree\b|credits?\b|bonus|reset|promo|giveaway|unlimited|no\s+(additional\s+)?(cost|charge)|at\s+no\s+charge|allocation|rate\s+limits?|quota|trial)/i;
-export const LEAD = /(免费|赠送|赠金|每[日天].{0,6}(送|领).{0,6}(积分|额度|灵感值|点数)|邀请.{0,10}(各得|送|得).{0,6}(积分|代金券|额度)|实名认证.{0,10}(送|领|得)|首月.{0,6}(\d折|[\d.]+\s*元)|\d+\s*%\s*off\s+(the\s+)?first\s+month|送\s*[\d一二三四五六七八九十百千万亿¥￥$]|送.{0,6}(额度|token|积分|会员|体验金|代金券|重置卡)|领.{0,6}(额度|赠金|代金券|体验金|会员|token)|限免|限时免费|额度(重置|回满|翻倍|永久)|重置卡|体验金|代金券|羊毛|鸡蛋|充值.{0,6}送|\$\s?\d[\d,]*\s*(美元)?\s*(额度|credits?)|\d+\s*(元|美元|刀)\s*(额度|赠金|代金券|体验金)|free\s+(tier|credits?|tokens?|trial|access|usage|quota|plan|month|week|for\s+(everyone|all|free\s+users))|\$\s?\d[\d,]*\s+(in\s+)?(free\s+)?(api\s+)?credits?|credits?\s+(grant|giveaway|bonus)|rate\s+limits?\s+(reset|doubled|increased)|resets?\s+(rate|usage|limits)|giveaway|promo\s+code|unlimited\s+(usage|generations?|access))/i;
+// 2026-10-15 漏抓：DeepSeek 故障补偿（补偿/返还 7 日消耗）和 Tibo“Day 10/ Reset”（只写重置、没写额度）都被线索关键词滤掉。
+export const LEAD = /((故障|宕机|中断|异常|事故|outage|downtime|incident).{0,20}(补偿|赔付|返还|退还|赠金)|全额(补偿|返还|退还)|(补偿|返还|退还).{0,20}(额度|赠金|代金券|积分|消耗|花费|费用|金额|token|credits?)|(消耗|花费|用量).{0,12}(返还|退还|补偿)|(全局|全球|全员|全体|所有人).{0,4}重置|重置.{0,4}(按钮|回归|到账|已完成|完成|落地)|global\s+reset|reset\s+button|\bday\s*\d+\s*\/\s*reset|refund(ed|s|ing)?\b.{0,40}(credits?|usage|spend|tokens?)|(credits?|usage|spend)\b.{0,30}refund|compensat\w*.{0,40}(credits?|usage|spend)|service\s+credits?|credited\s+back|make[-\s]?good|免费|赠送|赠金|每[日天].{0,6}(送|领).{0,6}(积分|额度|灵感值|点数)|邀请.{0,10}(各得|送|得).{0,6}(积分|代金券|额度)|实名认证.{0,10}(送|领|得)|首月.{0,6}(\d折|[\d.]+\s*元)|\d+\s*%\s*off\s+(the\s+)?first\s+month|送\s*[\d一二三四五六七八九十百千万亿¥￥$]|送.{0,6}(额度|token|积分|会员|体验金|代金券|重置卡)|领.{0,6}(额度|赠金|代金券|体验金|会员|token)|限免|限时免费|额度(重置|回满|翻倍|永久)|重置卡|体验金|代金券|羊毛|鸡蛋|充值.{0,6}送|\$\s?\d[\d,]*\s*(美元)?\s*(额度|credits?)|\d+\s*(元|美元|刀)\s*(额度|赠金|代金券|体验金)|free\s+(tier|credits?|tokens?|trial|access|usage|quota|plan|month|week|for\s+(everyone|all|free\s+users))|\$\s?\d[\d,]*\s+(in\s+)?(free\s+)?(api\s+)?credits?|credits?\s+(grant|giveaway|bonus)|rate\s+limits?\s+(reset|doubled|increased)|resets?\s+(rate|usage|limits)|giveaway|promo\s+code|unlimited\s+(usage|generations?|access))/i;
+// 综合福利版块（LINUX DO 福利羊毛）整版收录时，奶茶、单车、话费等非 AI 福利占七成，且中转站/号池推广属于明确不收的范围，
+// 却会进入研判、复核和身份任务，挤占模型额度与人工审核（2026-10-15 排查：7 天 334 条，仅 18 条形成条目）。
+// config.filter = "ai"：标题须涉及 AI 产品或模型，且不是中转站/号池/倍率类推广。
+export const AI_TOPIC = /\bai\b|人工智能|大模型|模型|\bllm|\bapi\b|token|gpt|claude|gemini|codex|cursor|copilot|kiro|windsurf|trae|qoder|workbuddy|codebuddy|opencode|agent|智能体|生图|绘图|文生|视频生成|coding|编程|编码|deepseek|\bdp\s*\d|qwen|通义|千问|豆包|doubao|kimi|moonshot|glm|智谱|混元|文心|minimax|海螺|grok|openai|anthropic|chatgpt|midjourney|sora|veo|可灵|即梦|vidu|火山|方舟|硅基|算力|gpu|推理|重置|flash|opus|sonnet|haiku|nano\s*banana|\bmimo\b|stepfun|step-\d|阶跃|讯飞|星火|百川|腾讯云|阿里云|百炼|huggingface|openrouter|groq|mistral|perplexity|suno|elevenlabs|runway|pika|higgsfield|tripo|meshy|krea|genspark|manus|lovable|bolt|\bv0\b|replit|vercel|notion\s*ai|\bima\b|zcode|z\.ai|\bstep\b|step滞销|senseaudio/i;
+export const RELAY_PROMO = /富可敌国|中转|公益站|hub\s*站|号池|倍率|转让|出售|代充|\d+(\.\d+)?x\b|共享.{0,6}key|官key|分组/i;
+export const isAiFreebieTopic = (title: string) => AI_TOPIC.test(title) && !RELAY_PROMO.test(title);
+/**
+ * 已批准条目的全部原文摘录仍逐字出现在本次抓到的页面里：说明官方页面仍支持已批准的条款，模型换说法不构成变化，
+ * 不再提交成身份候选（2026-10-15：免费模型每 6 小时重读价格页、改写措辞，产生大量人工身份任务）。
+ * 至少要有一段 12 字以上的摘录；任何一段摘录消失都按可能有变化处理，照常提交。
+ */
+export function approvedTermsStillPresent(excerpts: Record<string, string | null | undefined> | null | undefined, page: string): boolean {
+  const flat = (s: string) => s.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+  const quotes = Object.values(excerpts ?? {}).filter((q): q is string => typeof q === 'string' && !!q.trim()).map(flat);
+  if (!quotes.some(q => q.length >= 12)) return false;
+  const text = flat(page);
+  return quotes.every(q => text.includes(q));
+}
 export const isFreebie = (s: string) => FREEBIE.test(s);
 export const isLead = (s: string) => LEAD.test(s);
 export const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -137,6 +180,13 @@ export function relevantText(text: string, max = 12000): string {
   const keep = new Set<number>();
   lines.forEach((l, i) => { if (isFreebie(l)) [i - 1, i, i + 1].forEach(j => { if (j >= 0 && j < lines.length) keep.add(j); }); });
   return [...keep].sort((a, b) => a - b).map(i => lines[i]).join('\n').slice(0, max);
+}
+
+/** 本次相关文本里上次没有的句子（按空白规整后逐行比较）。 */
+export function newRelevantLines(previous: string, current: string): string[] {
+  const key = (l: string) => l.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const seen = new Set(previous.split('\n').map(key).filter(Boolean));
+  return current.split('\n').map(key).filter(l => l && !seen.has(l));
 }
 
 export const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');

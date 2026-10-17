@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import worker from '../src/worker/index';
 import { identityDb } from './fixtures/identity/db';
 import { mergeFastTrackFields, missingBasicFields, fastTrackHeld } from '../src/worker/fast-track';
@@ -79,6 +79,22 @@ it('model failures retry, then hand the job to the owner after three attempts', 
   expect((await call(`admin/fast-track/${created.body.jobId}/retry`, {})).body.state).toBe('queued');
 });
 
+it('a registered staff X account stays staff and its post publishes at staff tier', async () => {
+  f.sqlite.exec("INSERT INTO platforms(id,name,type,status,x_handles,staff_handles) VALUES('codexco','CodexCo','lab','approved','[\"@codexco\"]','[\"@tibo\"]')");
+  const created = await call('admin/fast-track', { platformId: 'codexco', url: 'https://x.com/Tibo/status/2110595484180214059', benefit: 'Day 10 全局重置' });
+  expect(created.body.registered).toEqual({ kind: 'existing', value: '@tibo' });
+  expect(f.sqlite.prepare("SELECT x_handles,staff_handles FROM platforms WHERE id='codexco'").get()).toEqual({ x_handles: '["@codexco"]', staff_handles: '["@tibo"]' });
+});
+
+it('an administrator-tested fast-track publishes at tested tier, not as the linked page', async () => {
+  f.sqlite.exec("INSERT INTO platforms(id,name,type,status,site) VALUES('odyssey','Odyssey','lab','approved','https://odyssey.world')");
+  const created = await call('admin/fast-track', { platformId: 'odyssey', url: 'https://odyssey.world/', benefit: 'Odyssey-3 公开研究预览，可免费试用', basis: 'tested' });
+  await ingest(`fast-track/${created.body.jobId}/claim`, {});
+  const result = await settle(created.body.jobId, await ingest(`fast-track/${created.body.jobId}/result`, { fields: extracted, sourceText: page, model: 'free' }));
+  expect(result.body).toMatchObject({ state: 'published' });
+  expect(JSON.parse((f.sqlite.prepare('SELECT evidence FROM offers WHERE id=?').get(result.body.offerId) as any).evidence).tier).toBe('tested');
+});
+
 it('any URL the owner gives is registered as the vendor official address', async () => {
   f.sqlite.exec("INSERT INTO platforms(id,name,type,status) VALUES('odyssey','Odyssey','lab','pending')");
   await call('admin/fast-track', { platformId: 'odyssey', url: 'https://x.com/odysseyml/status/123', benefit: '公开预览免费试用' });
@@ -86,7 +102,25 @@ it('any URL the owner gives is registered as the vendor official address', async
   const docs = await call('admin/fast-track', { platformId: 'vendor', url: 'https://docs.vendor-cdn.example/free', benefit: '新文档页的免费额度' });
   expect(docs.body.registered).toEqual({ kind: 'source', value: 'https://docs.vendor-cdn.example/free' });
   expect(f.sqlite.prepare("SELECT tier,auto_publish FROM sources WHERE url='https://docs.vendor-cdn.example/free'").get()).toEqual({ tier: 'site', auto_publish: 0 });
-  expect((await call('admin/fast-track', { platformId: 'vendor', url: 'https://mp.weixin.qq.com/s/abc', benefit: '公众号权益' })).status).toBe(400);
+});
+
+// 2026-10-16：管理员粘贴的公众号分享短链（不带 __biz）曾被拒绝；担保的链接一律接受。
+it('accepts a WeChat short link: registers the account when the page reveals __biz, otherwise only that article', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => String(input).endsWith('/s/withbiz')
+    ? new Response('<script>var biz = "MzkxMjM0NTY3OA==";</script>') : new Response('<h2>环境异常</h2><a>去验证</a>')));
+  try {
+    const known = await call('admin/fast-track', { platformId: 'vendor', url: 'https://mp.weixin.qq.com/s/withbiz', benefit: '公众号权益' });
+    expect(known.status).toBe(200); expect(known.body.registered).toEqual({ kind: 'wechat', value: 'MzkxMjM0NTY3OA==' });
+    expect((f.sqlite.prepare("SELECT wechat FROM platforms WHERE id='vendor'").get() as any).wechat).toContain('MzkxMjM0NTY3OA==');
+    const captcha = await call('admin/fast-track', { platformId: 'vendor', url: 'https://mp.weixin.qq.com/s/dGd6Nz03MF4', benefit: 'DeepSeek 故障补偿：全员领 500 积分' });
+    expect(captcha.status).toBe(200); expect(captcha.body.registered).toEqual({ kind: 'source', value: 'https://mp.weixin.qq.com/s/dGd6Nz03MF4' });
+    expect(f.sqlite.prepare("SELECT tier,enabled FROM sources WHERE url='https://mp.weixin.qq.com/s/dGd6Nz03MF4'").get()).toEqual({ tier: 'official', enabled: 0 });
+    const { officialTier } = await import('../src/shared/official-review');
+    const sources = f.sqlite.prepare("SELECT url,tier FROM sources WHERE platform_id='vendor'").all() as { url: string; tier: string }[];
+    const platform = { id: 'vendor', name: 'Vendor', site: null, xHandles: [], staffHandles: [], wechat: null };
+    expect(officialTier('https://mp.weixin.qq.com/s/dGd6Nz03MF4', platform, sources)).toBe('site'); // 已登记的单篇文章按官网级别认定
+    expect(officialTier('https://mp.weixin.qq.com/s/someOtherArticle', platform, sources)).toBeNull();
+  } finally { vi.unstubAllGlobals(); }
 });
 
 it('fast-track is administrator only', async () => {
@@ -113,4 +147,16 @@ it('the pipeline picks the extracted candidate closest to the owner benefit', ()
   const fields = fastTrackFields([{ ...extracted, title: '邀请好友得积分', valueText: '邀请奖励' }, extracted] as any, 'Odyssey-3 公开研究预览，可免费试用');
   expect(fields).toMatchObject({ title: extracted.title });
   expect(fastTrackFields([{ ...extracted, endKind: 'date', claimEnd: null }] as any, 'x')).toMatchObject({ endKind: 'unknown' });
+});
+
+it('vendor IDs never block fast-track: typed IDs are normalized, Chinese names on X get a hash ID (2026-10-16 "Replicas")', async () => {
+  const created = await call('admin/fast-track', { newPlatform: { name: 'Replicas', id: 'Replicas' }, url: 'https://x.com/connortbot/status/2110037854386843677', benefit: 'Replicas 注册一次性赠金 $300', basis: 'official' });
+  expect(created.status).toBe(200);
+  expect(created.body).toMatchObject({ platformId: 'replicas' });
+  const cn = await call('admin/fast-track', { newPlatform: { name: '某厂商' }, url: 'https://x.com/someone/status/2110037854386843678', benefit: '注册赠额' });
+  expect(cn.status).toBe(200);
+  expect(cn.body.platformId).toMatch(/^v-[0-9a-f]{8}$/);
+  const bad = await call('admin/fast-track', { newPlatform: { name: '某厂商', id: '某厂商' }, url: 'https://vendor-x.example/a', benefit: '注册赠额' });
+  expect(bad.status).toBe(400);
+  expect(JSON.stringify(bad.body)).toContain('厂商 ID 只能用英文字母');
 });

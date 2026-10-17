@@ -1,7 +1,7 @@
 import {prepareMembershipFields,MembershipError} from '../membership';
 import {membershipFacts} from '../../shared/membership';
 import {withMembershipFacts,membershipFactConsistent} from '../../shared/identity/membership';
-import {findReviewedLegacy,hasKnownTerms} from './reviewed-legacy';
+import {findReviewedLegacy,findSameSourceReread,hasKnownTerms} from './reviewed-legacy';
 import {visibilityState,activeVisibilityPredicate} from './visibility';
 import {taskSourcesCte} from './task-sources';
 import {retrieveManualHistory} from './manual-retrieval';
@@ -21,6 +21,7 @@ import { compareCandidate,evidenceGrounded,factSlots,RESOLVER_VERSION,RULES_VERS
 import { decisionApplies,evaluateReopen,reviewTaskKey } from '../../shared/identity/decision-policy';
 import { claimIdentityKey,hashTerms,sha256,stableJson } from '../../shared/identity/normalize';
 import { IdentityStore,IdentityError,readReviewDecision } from './store';
+import { findPerkGroup } from './perk-group';
 import { MutationBuilder,commitIdentityMutation,readIdentityReceipt,type Binding,type ExpectedRevision } from './commit';
 type OfferRow=typeof tables.offers.$inferSelect;
 type CandidateRow={id:string;observation_id:string;facts_json:string;facts_hash:string;raw_candidate_json:string;receipt_json:string|null;revision:number;entity_id:string|null;state:string;task_id:string|null;last_error:string|null;claim_family_key:string|null;assertion_facts_hash:string|null;source_fetch_id:string|null};
@@ -361,7 +362,10 @@ export class IdentityService {
   builder.require('EXISTS(SELECT 1 FROM intake_candidates WHERE id=? AND revision=?)',[candidate.id,candidate.revision]);
   if(candidate.claim_family_key&&!control&&!ambiguousFamily)builder.require('NOT EXISTS(SELECT 1 FROM intake_candidates WHERE claim_family_key=? AND id<>?)',[candidate.claim_family_key,candidate.id]);
   const leadRaw=JSON.parse(candidate.raw_candidate_json).candidate?._identityLegacyLead;
-  const legacyLead=!control&&leadRaw?z.strictObject({leadId:z.number().int().positive(),resolution:z.string()}).parse(leadRaw):null;
+  let legacyLead=!control&&leadRaw?z.strictObject({leadId:z.number().int().positive(),resolution:z.string()}).parse(leadRaw):null;
+  // 2026-10-16: when the originating lead has since been linked, closed or re-queued, the coupling below can never hold
+  // again and the candidate failed with 409 on every run. Resolve it on its own instead.
+  if(legacyLead&&!await this.db.prepare("SELECT 1 FROM leads WHERE id=? AND status='reviewing' AND resolution=? AND json_extract(resolution,'$.status')='checking'").bind(legacyLead.leadId,legacyLead.resolution).first())legacyLead=null;
   if(legacyLead)builder.require("EXISTS(SELECT 1 FROM leads WHERE id=? AND status='reviewing' AND resolution=? AND json_extract(resolution,'$.status')='checking')",[legacyLead.leadId,legacyLead.resolution]);
   const legacyRaw=JSON.parse(candidate.raw_candidate_json).candidate?._identityLegacyJob;
   const legacyJob=!control&&legacyRaw?z.strictObject({offerId:z.string(),entityId:z.string(),entityRevision:z.number().int().nonnegative(),originalJob:z.string()}).parse(legacyRaw):null;
@@ -379,15 +383,15 @@ export class IdentityService {
   const blockRevision=blockKey?(await this.db.prepare('SELECT revision FROM identity_blocks WHERE block_key=?').bind(blockKey).first<{revision:number}>())?.revision??0:0;
   if(blockKey)expected.push({kind:'block',id:blockKey,revision:blockRevision});
   if(!control&&!ambiguousFamily&&!candidate.task_id&&receipt.outcome!=='duplicate_rejected'){
-   const reviewed=await findReviewedLegacy(this.db,candidate.raw_candidate_json,facts);
+   const reviewed=await findReviewedLegacy(this.db,candidate.raw_candidate_json,facts)??await findSameSourceReread(this.db,candidate.raw_candidate_json,facts,candidate.observation_id,candidate.source_fetch_id??null);
    if(reviewed){
     if(legacyJob){if(reviewed.entityId!==legacyJob.entityId)throw new IdentityError(409,'official review resolved a different activity');builder.acknowledgeOfficialJob(legacyJob.offerId,legacyJob.originalJob,reviewed.revision);}
     expected.push(...reviewed.relatedRevisions.map(r=>({kind:'entity' as const,id:r.id,revision:r.revision})));
     builder.require('EXISTS(SELECT 1 FROM offers WHERE id=? AND updated_at=?)',[reviewed.offerId,reviewed.updatedAt]);
     builder.require('EXISTS(SELECT 1 FROM benefit_versions WHERE id=? AND display_candidate_json=?)',[reviewed.versionId,reviewed.display]);
     builder.require('NOT EXISTS(SELECT 1 FROM review_decisions WHERE supersedes_id=?)',[reviewed.decisionId]);
-    Object.assign(receipt,{entityId:reviewed.entityId,versionId:reviewed.versionId,decisionId:reviewed.decisionId,canonicalOfferId:reviewed.offerId,taskId:null,entityRevision:reviewed.revision,outcome:reviewed.action==='approve'?'duplicate_approved':'duplicate_rejected',reasonCodes:['reviewed_legacy_assertion'],retryable:false});
-    builder.insert('entity_observations',{entity_id:reviewed.entityId,candidate_id:candidate.id,relation:'same',resolver_version:RESOLVER_VERSION,reason_json:JSON.stringify({reason:'reviewed_legacy_assertion',decisionId:reviewed.decisionId})},'nothing');
+    Object.assign(receipt,{entityId:reviewed.entityId,versionId:reviewed.versionId,decisionId:reviewed.decisionId,canonicalOfferId:reviewed.offerId,taskId:null,entityRevision:reviewed.revision,outcome:reviewed.action==='approve'?'duplicate_approved':'duplicate_rejected',reasonCodes:[reviewed.reason??'reviewed_legacy_assertion'],retryable:false});
+    builder.insert('entity_observations',{entity_id:reviewed.entityId,candidate_id:candidate.id,relation:'same',resolver_version:RESOLVER_VERSION,reason_json:JSON.stringify({reason:reviewed.reason??'reviewed_legacy_assertion',decisionId:reviewed.decisionId})},'nothing');
     builder.update('intake_candidates',{entity_id:reviewed.entityId,version_id:reviewed.versionId,decision_id:reviewed.decisionId,task_id:null,state:reviewed.action==='approve'?'resolved_same':'resolved_rejected',revision:candidate.revision+1,receipt_json:JSON.stringify(receipt),last_error:null,next_attempt_at:null,lease_token:null,lease_until:null},'id=? AND revision=?',[candidate.id,candidate.revision]);builder.assertOwnership('intake_candidates',candidate.id);
     return this.commit(builder,expected,receipt);
    }
@@ -537,6 +541,8 @@ export class IdentityService {
    }
    builder.insert('entity_observations',{entity_id:entity.id,candidate_id:candidate.id,relation:comparison?.termsRelation==='CHANGED'?'changed':comparison?.termsRelation==='EQUIVALENT'?'same':'evidence_only',resolver_version:RESOLVER_VERSION,reason_json:JSON.stringify(receipt.reasonCodes)},'nothing');
   } else if(!['duplicate_rejected','evidence_reopen'].includes(receipt.outcome)){receipt.outcome='needs_identity_review';receipt.entityId=null;receipt.versionId=null;receipt.reasonCodes.push('identity_unproven');}
+  // Repeated reports of one perk join the open card for it instead of opening another (see perk-group.ts).
+  if(!control&&!entity&&taskKind==='identity'&&receipt.outcome==='needs_identity_review'&&taskKey===reviewTaskKey({kind:'identity',clusterId:candidate.id})){const grouped=await findPerkGroup(this.db,candidate.id,candidate.raw_candidate_json);if(grouped){taskKey=grouped;receipt.reasonCodes.push('grouped_with_open_card');}}
   if(!['duplicate_approved','duplicate_rejected'].includes(receipt.outcome)) {
    const active=await this.db.prepare("SELECT * FROM review_tasks WHERE task_key=? AND state IN ('open','checking','manual')").bind(taskKey).first<TaskRow>();
    const taskId=active?.id??crypto.randomUUID();receipt.taskId=taskId;

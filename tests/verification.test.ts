@@ -835,8 +835,11 @@ describe('public status and subscriptions', () => {
   it('distinguishes an untouched source from a healthy source', async () => {
     const coverage = await call('coverage');
     expect((coverage.body.officialPages as { healthy: boolean }[])[0].healthy).toBe(false);
+    // 新登记、还没轮到采集的信源不报失效（2026-10-16）；登记超过 12 小时仍未成功才报。
+    expect(((await call('admin/health', undefined, 'admin')).body.failingSources as { id: string }[]).map(x => x.id)).not.toContain('source');
+    sqlite.prepare("UPDATE sources SET created_at='2026-01-01T00:00:00.000Z' WHERE id='source'").run();
     const health = await call('admin/health', undefined, 'admin');
-    expect((health.body.failingSources as { id: string }[]).map(x => x.id)).toContain('source');
+    expect((health.body.failingSources as { id: string; reason: string }[]).find(x => x.id === 'source')?.reason).toBe('登记超过 12 小时仍未采集到');
   });
 
   it('serves actual RSS XML for verified, approved offers', async () => {
@@ -1101,6 +1104,17 @@ describe('stuck lead rescue lifecycle',()=>{
     const jobs=await Promise.all([1,2].map(()=>call('ingest/lead-reviews/1312/claim',{})));
     expect(jobs.filter(r=>r.body.claimed)).toHaveLength(1);
   });
+  it('does not automatically re-review leads older than three days',async()=>{
+    sqlite.prepare("INSERT INTO leads(id,origin,url,title,status,raw,created_at) VALUES(1312,'linuxdo','https://vendor.example/old','旧线索','reviewing','原始线索','2026-01-01T00:00:00.000Z')").run();
+    expect((await call('ingest/lead-reviews/queue?limit=4')).body.jobs).toEqual([]);
+    expect((await call('ingest/lead-reviews/queue?limit=4&ids=1312')).body.jobs).toMatchObject([{id:1312}]);
+  });
+  it('goes straight to manual review when automatic verification cannot succeed',async()=>{
+    seed();const lease=await call('ingest/lead-reviews/1312/claim',{});
+    const result=await call('ingest/lead-reviews/1312/result',{jobId:lease.body.jobId,outcome:'manual',manualNow:true,reason:'原文是微信公众号文章，请快速上架',candidates:[],queries:[]});
+    expect(result.status).toBe(200);expect(result.body.status).toBe('manual');
+    expect((await call('admin/queue',undefined,'admin')).body.leadTasks).toMatchObject([{id:1312,resolution:{status:'manual'}}]);
+  });
   it('records a timed retry then exposes an actionable manual task instead of losing the lead',async()=>{
     seed();const lease=await call('ingest/lead-reviews/1312/claim',{});
     const result=await call('ingest/lead-reviews/1312/result',{jobId:lease.body.jobId,outcome:'retry',reason:'官方页面暂时不可达',candidates:[],queries:[]});
@@ -1115,6 +1129,35 @@ describe('stuck lead rescue lifecycle',()=>{
     const result=await call('ingest/lead-reviews/1312/result',{jobId:lease.body.jobId,outcome:'manual',reason:'旧任务',queries:[],candidates:[]});
     expect(result.status).toBe(409);
     expect((sqlite.prepare('SELECT status FROM leads WHERE id=1312').get() as any).status).toBe('rejected');
+  });
+  // 2026-10-15：Day 10 重置的回复被自动复核关联到 10 月 12 日 Day 8 条目。
+  it('does not link a later reset round to an earlier reset offer; the lead stays open for review',async()=>{
+    await call('ingest/offers',[offer]);
+    sqlite.prepare("UPDATE offers SET title='Tibo Day 8 全局使用额度重置',tags='[\"reset\"]',claim_start='2026-10-12',claim_end='2026-10-12',end_kind='date',source_tz='America/Los_Angeles',published_at='2026-10-13T01:03:25.000Z',created_at='2026-10-13T03:10:28.055Z'").run();
+    sqlite.prepare("INSERT INTO leads(id,origin,url,title,status,raw,created_at) VALUES(1312,'aihot','https://x.com/thsottiaux/status/2110595554036400151','Codex 重置：Tibo 确认重置','reviewing','Landing within the next 2 hours','2026-10-15T05:28:23.038Z')").run();
+    const lease=await call('ingest/lead-reviews/1312/claim',{});
+    expect((lease.body.existing as any[])[0]).toMatchObject({claimEnd:'2026-10-12',sourceTz:'America/Los_Angeles',tags:['reset']});
+    const result=await call('ingest/lead-reviews/1312/result',{jobId:lease.body.jobId,outcome:'linked',offerIds:[offer.id],reason:'同一次发放已收录',queries:[],candidates:[]});
+    expect(result.status).toBe(200);expect(result.body.status).not.toBe('linked');
+    const lead=sqlite.prepare('SELECT status,offer_id,resolution FROM leads WHERE id=1312').get() as any;
+    expect(lead).toMatchObject({status:'reviewing',offer_id:null});
+    expect(JSON.parse(lead.resolution).reason).toContain('不同日期的重置');
+  });
+  it('links a lead when the administrator pastes the offer page URL or short code',async()=>{
+    seed();await call('ingest/offers',[offer]);
+    const task=()=>call('admin/queue',undefined,'admin').then(q=>(q.body.leadTasks as any[])[0]);
+    const bad=await call('admin/leads/1312/resolve',{expectedVersion:(await task()).reviewVersion,outcome:'linked',offerId:'https://example.com/nothing',reason:'重复了'},'admin');
+    expect(bad.status).toBe(400);expect(bad.body.error).toContain('网址');
+    const linked=await call('admin/leads/1312/resolve',{expectedVersion:(await task()).reviewVersion,outcome:'linked',offerId:'https://ai-yangmao.com/#offer-'+offer.id,reason:'重复了'},'admin');
+    expect(linked.status).toBe(200);expect(linked.body.offer).toMatchObject({id:offer.id,title:offer.title});
+    expect(sqlite.prepare('SELECT status,offer_id FROM leads WHERE id=1312').get()).toMatchObject({status:'linked',offer_id:offer.id});
+  });
+  it('links a lead by the four-character short code shown in the admin',async()=>{
+    seed();await call('ingest/offers',[offer]);
+    const {shortCode}=await import('../src/worker/admin');
+    const task=(await call('admin/queue',undefined,'admin')).body.leadTasks[0];
+    const linked=await call('admin/leads/1312/resolve',{expectedVersion:task.reviewVersion,outcome:'linked',offerId:`[${shortCode(offer.id)}]`,reason:'重复了'},'admin');
+    expect(linked.status).toBe(200);expect(linked.body.offer.code).toBe(shortCode(offer.id));
   });
   it('offers a versioned link-to-existing action and records an explicit final resolution',async()=>{
     seed();await call('ingest/offers',[offer]);

@@ -40,4 +40,6 @@ it('re-sending the same topics with updated text is accepted', async () => {
 it('a chunk where every lead matches an active title rule still fits the request budget', async () => {
   f.sqlite.exec("INSERT INTO screening_rules(id,kind,scope_kind,scope_value,category,description,pattern,status,created_at) VALUES('r1','title_pattern','global',NULL,'not_benefit','测试规则','抽奖','active','2026-10-14T00:00:00Z')");
   expect(await postChunked(batch(1, i => `抽奖帖 ${i}`))).toBe(25);
+  expect(f.sqlite.prepare("SELECT count(*) n FROM leads WHERE status='rejected'").get()).toEqual({ n: 25 });
+  expect(f.sqlite.prepare("SELECT hits FROM screening_rules WHERE id='r1'").get()).toEqual({ hits: 25 });
 });

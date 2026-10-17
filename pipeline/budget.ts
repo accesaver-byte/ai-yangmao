@@ -1,6 +1,7 @@
 import { api } from './lib';
 
-export const MODEL_OUTPUT_LIMIT = 4096;
+// 推理型模型（DeepSeek Flash、openrouter/free 路由到的思考模型）先消耗输出额度思考；4096 时常见 finish=length 且正文为空（2026-10-15）。
+export const MODEL_OUTPUT_LIMIT = 8192;
 export class BudgetExhaustedError extends Error {}
 export class BudgetLedgerError extends Error {}
 
@@ -25,6 +26,16 @@ export async function settleModel(reservation: ModelReservation, provider: strin
     await api(`/model-budget/${reservation.id}/settle`, { provider, tokens, costCny });
   } catch (error) {
     throw new BudgetLedgerError(`模型用量未能入账，预留余额仍被占用：${(error as Error).message}`);
+  }
+}
+
+/** 按固定费用预留（如联网搜索插件按次计费），与模型调用共用月度付费上限。 */
+export async function reserveFixed(provider: string, costCny: number): Promise<ModelReservation> {
+  try {
+    const result = await api<{ id: number }>('/model-budget/reserve', { provider, tokens: 0, costCny });
+    return { id: result.id, tokens: 0, costCny };
+  } catch (error) {
+    throw new BudgetExhaustedError(`搜索预算无法预留：${(error as Error).message}`);
   }
 }
 

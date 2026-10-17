@@ -4,7 +4,7 @@
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
-  "vars": { "DAILY_TOKEN_CAP": "0", "MONTHLY_COST_CAP_CNY": "10" },
+  "vars": { "DAILY_TOKEN_CAP": "0", "MONTHLY_COST_CAP_CNY": "72" },
   // 网站页面（静态资源）；/api/* 先交给 Worker
   "assets": { "directory": "./public", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*", "/rss.xml"] },
   "d1_databases": [

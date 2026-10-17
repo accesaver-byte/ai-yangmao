@@ -122,6 +122,7 @@ Keys for the user conditions in `profile`: `phone` overseas phone number, `card`
 **Rules for agents**
 
 - Read-only queries. Don't sign up or claim offers on the user's behalf, and don't call admin endpoints.
+- When the user only states a goal ("build a mini-program", "write a document"), ask a few questions that change the results first: which capabilities they need (text, code, image, video, audio), whether they can pay or add a card, which memberships they already hold, and whether they can use an overseas network. At most three questions per round, and show results after two rounds at most.
 - Don't send conditions the user hasn't stated, and don't assume them; "eligibility unknown" is not the same as "not eligible".
 - A pending value is not zero, an unknown deadline doesn't mean permanent, and an estimated value is not cash.
 - Paginate with the `nextOffset` from the response. Retry at most twice on network errors, 429, or errors marked `retryable:true`.

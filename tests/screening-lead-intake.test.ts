@@ -14,15 +14,17 @@ async function postLeads(body: unknown, env: { SCREENING_MODE?: string } = {}) {
 }
 
 describe('screened lead intake', () => {
-  it('records but does not close a rule match in shadow mode', async () => {
+  // 2026-10-16: owner-approved rules close on arrival in every mode except off; shadow only holds back model verdicts.
+  it('records and closes an owner-approved rule match even in shadow mode', async () => {
     seedActiveRule(f, { id: 'r1', pattern: '【富可敌国】', scopeKind: 'origin', scopeValue: 'linuxdo', category: 'relay_station' });
     await postLeads([{ origin: 'linuxdo', url: 'https://linux.do/t/x/1', title: '【富可敌国】某 API 送余额' }], { SCREENING_MODE: 'shadow' });
-    expect(f.sqlite.prepare("SELECT status FROM leads WHERE url='https://linux.do/t/x/1'").get()).toEqual({ status: 'new' });
-    expect(f.sqlite.prepare('SELECT verdict, model, applied_at FROM screening_decisions').get()).toEqual({ verdict: 'rejected_by_rule', model: 'gate0', applied_at: null });
+    expect(f.sqlite.prepare("SELECT status FROM leads WHERE url='https://linux.do/t/x/1'").get()).toEqual({ status: 'rejected' });
+    expect(f.sqlite.prepare('SELECT verdict, model FROM screening_decisions').get()).toEqual({ verdict: 'rejected_by_rule', model: 'gate0' });
+    expect(f.sqlite.prepare('SELECT applied_at FROM screening_decisions').get()).not.toEqual({ applied_at: null });
   });
   it('skips a repost whose url_key already exists', async () => {
     await postLeads([{ origin: 'linuxdo', url: 'https://linux.do/t/a/9' }], { SCREENING_MODE: 'shadow' });
     const r = await postLeads([{ origin: 'linuxdo', url: 'https://linux.do/t/b/9/3' }], { SCREENING_MODE: 'shadow' });
-    expect(await r.json()).toEqual({ created: 0, skipped: 1 });
+    expect(await r.json()).toEqual({ created: 0, skipped: 1, filtered: 0 });
   });
 });

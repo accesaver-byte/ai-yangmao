@@ -2,8 +2,9 @@
 
 - 项目：AI 羊毛牧场，Cloudflare Worker / D1，TypeScript + Hono + Drizzle；Node.js 24。
 - 入口：[README.md](README.md)；字段与收录口径以 [数据合同](docs/data-contract.md) 和 [通用规则](pipeline/learned-rules.md) 为准。
-- 公众号文章只在其 `__biz` 已登记于平台 `wechat` 时算官方证据；无 `__biz` 的短链不算。
+- 公众号文章只在其 `__biz` 已登记于平台 `wechat` 时算官方证据；无 `__biz` 的短链不算，除非该篇文章本身已登记为官方信源（管理员快速上架会这样登记）。
 - 管理员可直接确认无已知事实的身份候选“与已上架 X 相同”（同平台、已批准）；这不放宽有事实冲突的守卫。
+- 系统可自行确认已批准条目的同页重读（2026-10-16 管理员授权）：同平台、同一官方页面、已批准的权益原文仍在页面上（容忍换行、全半角、标点），且候选没有新的金额、模型或门槛；不看模型措辞与自造 ID。同一权益的多条报道合并到一张查重卡，决定作用于所选来源，其余按重复结案。
 - 管理员「⚡ 快速上架」：担保的链接即登记为厂商官方地址，先免费模型、不行再 DeepSeek 兜底补字段，基础字段齐即上架，跳过筛查与审核闸门（仅管理员；详见 operations.md）。
 - 现行平台事实在 D1 `platform_profiles`。`pipeline/platform-notes.md` 已冻结为历史快照，不再覆盖现行规则。
 - 审核使用仓库 [.claude/skills/yangmao-review](.claude/skills/yangmao-review/SKILL.md)，不要以外部旧副本替代。

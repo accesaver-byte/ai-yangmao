@@ -2,7 +2,7 @@
 
 本地启动与 Windows 环境准备见 [本地开发](local-development.md)；本地演示数据不代表生产状态。
 
-校对日期：2026-10-13。本文描述现役命令和源码机制；当次线上版本、任务和未完成项见[整理凭证](closeout-2026-10-13.md)。字段与业务口径由[数据合同](data-contract.md)维护，文档职责见[索引](README.md)。
+校对日期：2026-10-15。本文描述现役命令和源码机制；当次线上版本、任务和未完成项见[整理凭证](closeout-2026-10-15.md)。字段与业务口径由[数据合同](data-contract.md)维护，文档职责见[索引](README.md)。
 
 ## 身份改造发布状态
 
@@ -69,7 +69,7 @@ gh workflow run collect.yml --ref main -f fast_leads=true -f lead_limit=50
 
 `pipeline/llm.ts`加载通用规则、D1 平台画像及管理员纠正。现行平台事实在 `platform_profiles`；`pipeline/platform-notes.md` 已冻结为历史快照，只在没有画像时回退。抽取优先使用画像里的 pitfalls 与 patterns。GitHub 采集读取远端代码；修改规则后只部署 Worker 不会更新管线，需推送。画像变更写 D1，不靠改这份历史文件。
 
-模型链为Gemini免费层、OpenRouter、可选GLM、预算内DeepSeek付费兜底。免费供应商受限会本轮冷却；重要或积压超过2小时的线索可使用既有付费预算。默认`DAILY_TOKEN_CAP=0`、`MONTHLY_COST_CAP_CNY=10`，实际覆盖以部署变量和Actions配置为准。预算先原子预留再结算，用量不明保留预留；RSS单篇失败不阻断后续，FORCE可以重抽。
+模型链为Gemini免费层、OpenRouter、可选GLM、预算内DeepSeek付费兜底。免费供应商受限会本轮冷却；重要或积压超过2小时的线索可使用既有付费预算。默认`DAILY_TOKEN_CAP=0`、`MONTHLY_COST_CAP_CNY=72`（2026-10-15 管理员定为每月约 $10），实际覆盖以部署变量和Actions配置为准。预算先原子预留再结算，用量不明保留预留；RSS单篇失败不阻断后续，FORCE可以重抽。
 
 工作流`extraction-lessons.yml`用合成文本驱动真实模型，`only_cases`以[scripts/eval-extraction-lessons.ts](../scripts/eval-extraction-lessons.ts)的cases为准，留空全部；涵盖套餐/免费额度、账单模式、日期、重置、身份认证、资助与比赛及官方活动错配。禁止付费兜底，不写条目/线索，模型仍记预算，输出保留artifact。通过不等于官网事实全部核验；失败需查具体结果，不能降低验收标准。
 
@@ -144,25 +144,69 @@ OpenRouter默认备用为`openrouter/free`；404须检查模型可用性，不�
 
 ## 线索筛选（影子模式）
 
-里程碑 1（2026-10-13 上线）在身份系统之前为每条新线索记录筛选判定与紧急度（P0–P3），**不关闭、不关联、不重排、不发布**。开关为 Worker 与 GitHub 变量 `SCREENING_MODE=off|shadow|suggest|auto`（现为 `shadow`）；`SCREENING_MODELS` 为固定的 OpenRouter `:free` 模型（逗号分隔，校准前按顺序兜底）；可选 `SCREENING_PAID_MODEL` 与 `SCREENING_PAID_PRICE_IN/OUT` 仅供 P0 兜底。每次调用经预算台账预留/结算：筛选单独记账（`SCREENING_MONTHLY_CAP_CNY`，默认 72），免费池每日 1000 次（P0/P1 预留 200、非紧急 ≤800、回填 ≤400）。后续阶段与门槛见[实施计划](superpowers/plans/2026-10-12-lead-screening-redesign.md)。
+里程碑 1（2026-10-13 上线）在身份系统之前为每条新线索记录筛选判定与紧急度（P0–P3），**不关闭、不关联、不重排、不发布**（管理员批准的入口过滤规则除外，见下）。开关为 Worker 与 GitHub 变量 `SCREENING_MODE=off|shadow|suggest|auto`（现为 `shadow`）；`SCREENING_MODELS` 为固定的 OpenRouter `:free` 模型（逗号分隔，校准前按顺序兜底）；可选 `SCREENING_PAID_MODEL` 与 `SCREENING_PAID_PRICE_IN/OUT` 仅供 P0 兜底。每次调用经预算台账预留/结算：筛选单独记账（`SCREENING_MONTHLY_CAP_CNY`，默认 72），免费池每日 1000 次（P0/P1 预留 200、非紧急 ≤800、回填 ≤400）。后续阶段与门槛见[实施计划](superpowers/plans/2026-10-12-lead-screening-redesign.md)。
+
+### 入口过滤规则（2026-10-16）
+
+模型筛选仍是影子模式，但**管理员批准的标题规则例外**：线索写入时（`POST /api/ingest/leads`）按 `screening_rules` 中启用的 `title_pattern` 匹配标题，命中即关闭线索（`status=rejected`，经身份系统留拒绝记录），不再研判、搜索或进审核；`SCREENING_MODE=off` 时不生效。后台「活动待审」顶部「🚫 入口过滤规则」：
+
+- 建议：从管理员在线索阶段的拒绝（`decision_labels`，owner）中挖掘同一类别累计 ≥3 条的共同标题词；只学 `non_ai`（含优惠券、购物券）、`ordinary_discount`、`relay_station`、`account_pool`、`personal_giveaway`。`duplicate`、`unverifiable`、`expired` 不说明“这类线索不该收”，不参与。
+- 创建前校验：规则命中任何已批准条目或已关联线索的标题即拒绝（409，列出冲突标题）；可勾选“同时关闭现有未处理的同类线索”。“不再建议”记为 `declined`。停用后立即不再拦截；`hits` 记录拦截数。
+- 接口（仅管理员）：`GET /api/admin/screening/rules`（规则与建议）、`POST /api/admin/screening/rules`、`POST /api/admin/screening/rules/:id/retire`。
+
+### 查重减负（2026-10-16）
+
+一周 283 张查重卡全部由人（管理员或代理）决定，其中 70% 是已上架权益的重复报道。改为：
+
+- **同页重读自动确认**（`findSameSourceReread`）：按同平台 + 同一官方页面（规范化 URL）匹配已批准条目，不再要求模型生成相同的条目 ID；已批准的权益原文须仍在页面上（`pageContains` 折叠换行、全半角、标点、千分位），候选的金额、模型、门槛须都已在批准条款里（`introducesNothingNew`）。同页多条已批准条目时须恰好一条符合，否则人工。
+- **同一权益合并一张卡**（`identity/perk-group.ts`）：同平台、金额/模型一致且文字相近（或文字高度相近）的未决候选并入 21 天内已开的同类卡（每卡最多 10 条），金额或模型冲突一律不并。卡片上的“关联/新建”作用于所选来源，其余来源随后按 `duplicate` 一并结案；拒绝整组拒绝。
+- **积压提醒**：Telegram 每日至多一次，查重卡超过 20 张或最久超过 48 小时即置顶提醒（`IDENTITY_BACKLOG_MAX`）。
+- **真实分工统计**：`GET /api/admin/review-stats?days=7`，后台「活动待审」顶部显示。查重决定按请求 ID 区分：`ui-` 为网页点击、`fast-track-` 为快速上架、其余管理员请求为代理/脚本；线索区分系统、入口规则、人工。
+
+### 查重卡“系统核查中”死锁（2026-10-16 修复）
+
+症状：卡片长期停在“官方原文尚未核实 / 系统核查中”，管理员看不到决定按钮，系统也不处理；一周内身份自动处理 `resolved` 次次为 0，错误被吞成 `deferred`。原因与修复：
+
+- **原文核实失败会循环**：系统重抓官方页后，若页面上找不到候选摘录（脚本渲染页、页面已改、原文来自媒体）或只能经 Jina 读取，`scanIdentityTask` 抛 400 且不记录，卡片保持 `needs_source`（按钮只在 `ready` 时显示），下一轮再试。现记为 `source_unverifiable`：卡片交给管理员（可决定、附同厂商活动列表以便“关联同一活动”、或 ⚡ 快速上架/拒绝），3 天后再自动复查；常规重扫不再把它锁回。
+- **遗留线索耦合的候选永远 409**：候选创建时绑定原线索的处理状态；线索之后被关联/关闭/重排，提交前置条件再也不成立，每轮 `identity revisions changed`，且不计尝试次数、永远排在重试队首。现在原线索已变化时解除耦合，候选独立判定。
+- **审计补充（同日）**：关联了查重卡的线索在线索队列与提醒中隐藏、自身操作被拒，卡片决定后却无人重算线索，27 条自 10-04 卡住；采集每轮调用 `POST /api/ingest/lead-sweep`，对关联卡已全部结案的线索重算（关联/关闭，或回到线索队列交人工），自动复核超过 24 小时仍 `checking` 的线索转人工并写明原因。`history_unusable` 的查重卡同样交管理员决定（原先既被排除出系统队列又隐藏按钮）。
+- **身份流程不再吞错**：采集日志 `identity.errors` 按原因计数，`identity.handedToOwner` 记录交给管理员的卡数。
+
+### 自动关闭抽查（2026-10-16）
+
+后台「活动待审」顶部「🔍 自动关闭抽查」列出最近 7 天系统自己关闭（自动研判或入口规则）、管理员尚未看过的线索，建议每周看一次。标题提到已知厂商或含“免费、额度、赠送、credits”等词的排在“可能误关”组。每条可：选类别后「✅ 本组其余都关得对」（写 owner 标签，即里程碑 2 的校准样本；每次最多 15 条）、「✗ 误关」（`resolution.spotCheck.verdict=wrong`；入口规则的 `overrides+1`，命中 ≥10 且误关率 >10% 自动停用）、「⚡ 上架」（快速上架并把该线索改为 linked）。接口（仅管理员）：`GET /api/admin/screening/spot-check?days=7`、`POST .../spot-check/confirm`、`POST .../spot-check/:id/wrong`。
+
+线索阶段的内容类拒绝（同上类别及 `paid_bundle`、`model_news_only`）同时进入 `/api/ingest/corrections`，研判与抽取提示词即时可见；每周 distill 把它们归纳成“研判时直接不收”的规则。
 
 身份任务：管理员对“没有已知事实”的候选确认“与已上架 X 相同”时，只要 X 已批准且同平台即可关联（`owner_confirmed_same`）；有已知事实冲突的候选仍走原有守卫。
 
-公众号证据：`mp.weixin.qq.com` 文章仅当其 `__biz` 在平台 `wechat` 字段中才算官方；无 `__biz` 的短链、未登记账号不算。管理员通过以公众号文章为证据的条目时自动追加该 `__biz`。
+公众号证据：`mp.weixin.qq.com` 文章仅当其 `__biz` 在平台 `wechat` 字段中，或该篇文章网址本身已登记为官方信源时才算官方；其他无 `__biz` 的短链、未登记账号不算。管理员通过以公众号文章为证据的条目时自动追加该 `__biz`。
 
 ## ⚡ 快速上架（管理员）
 
-后台 补录 页顶部与「线索复核」卡片内的「⚡ 快速上架」只对管理员开放（审核员 403）。管理员担保“官方发布”或“我亲测可领”，填厂商（已有或新厂商名称/ID）、官方链接、主要权益即可，跳过筛查、官方核验与审核闸门。迁移 `0042_fast_track.sql`：`fast_track_jobs` 任务表，`offers.fast_tracked_at`。
+后台 补录 页顶部，以及每个审核阶段的卡片（「线索复核」、「重要新线索」、「权益活动查重」）内的「⚡ 快速上架」只对管理员开放（审核员 403）。管理员担保“官方发布”或“我亲测可领”，填厂商（已有厂商或新厂商名称；厂商 ID 由系统生成，不用填）、官方链接、主要权益即可，跳过筛查、官方核验与审核闸门。迁移 `0042_fast_track.sql`：`fast_track_jobs` 任务表，`offers.fast_tracked_at`。
 
-- 链接即登记为厂商官方地址：公众号文章追加 `__biz`（必须带 `__biz`）；X 链接追加账号；已在白名单的不重复登记；平台无官网时写入 `site`；否则新增 `tier=site`、`auto_publish=0` 的信源（id `<平台>-ft-*`）。新厂商直接以 `approved` 建档。
+- 链接即登记为厂商官方地址：公众号链接一律接受：带 `__biz` 或能从正文读出 `__biz` 时登记该公众号，读不到（分享短链、微信验证页）时只把这一篇文章登记为官方信源（`tier=official`、不抓取）；X 链接追加账号（已登记的员工账号 `staff_handles` 不升级为官方账号，条目证据为 staff）；已在白名单的不重复登记；平台无官网时写入 `site`；否则新增 `tier=site`、`auto_publish=0` 的信源（id `<平台>-ft-*`）。新厂商直接以 `approved` 建档。
 - 提交后触发一次快速采集；`runPipeline` 最先处理快速上架队列：读链接正文，用专用提示词（管理员已担保，只补字段、不判断收录）补字段，取与主要权益最相近的候选。**先用免费模型**；免费模型失败或缺基础字段时，同一次尝试内改用付费兜底 DeepSeek（每条约 ¥0.03，与其他付费兜底共用 `MONTHLY_COST_CAP_CNY` 月度上限，快速上架排在最前）。上限用尽则只用免费模型。主要权益原文即条目额度文案，管理员填的标题/日期优先。
 - 基础字段（标题、类型、领取方式、额度、模态、门槛≠unknown、截止方式、date 时的截止日）齐了立即上架；缺字段或规则不过转「需要你补充」，在 补录 页补齐即上架。两档都失败时在本轮内隔 30 秒重试（不另起采集：采集串行，新运行会排在本轮之后），共 3 次后交管理员（可点“让模型重新读取”）；两档都只补到部分字段时，送最完整的一份，管理员只补缺的。
 - 上架走身份系统：建候选 →（如有身份任务）以管理员身份确认为新活动 → 以管理员身份通过初审。单个请求受 50 次 D1 查询预算限制，任务按步保存进度（`publishing`），流水线或后台调用 `advance` 续传，通常 4 个请求完成；同一步在新请求里仍无进展则转「需要你补充」。已批准的重复活动视为已上架；此前被拒的同一活动不自动重开。
-- 关联线索标为 `linked`。快速上架 24 小时内不进入即时（临期）推送，次日飞书日报照常带上。
+- 关联线索标为 `linked`；从「权益活动查重」卡片发起的，上架后该查重任务按“与新条目重复”（duplicate）自动结案（迁移 `0048`，`fast_track_jobs.identity_task_id`）。快速上架 24 小时内不进入即时（临期）推送，次日飞书日报照常带上。
 
 ## 线索写入批量
 
 `POST /api/ingest/leads` 在 enforce 模式下受每请求 50 次 D1 查询预算约束（约 3 次 + 每条新线索 3 次，命中筛选规则时约 6 次）。中继与流水线按 `LEAD_POST_CHUNK = 5` 分批发送；Worker 每条 INSERT 最多 16 行（6 个绑定列，D1 单语句上限 100 个参数）。2026-10-13 起 linux.do 连续失败即因批量过大（PR #41）。
+
+## 线索关键词与综合福利版块
+
+线索关键词（`pipeline/lib.ts` 的 LEAD）覆盖服务故障补偿/消耗返还和只写“全局重置/Day N Reset”的员工公告；AIHOT 动态按标题与摘要一起判断，重置接口每个事件只出一条线索，用最早的主公告并附全部回帖与事件时间（2026-10-15 漏抓修复）。社区 feed 的 `config.filter`：`all` 整版收录，`ai` 只收标题涉及 AI 产品/模型且不是中转站、号池、倍率推广的帖子（综合福利版块用），缺省按 LEAD。中继信源的代码由 Mac 主检出运行，合并并拉取后再切换配置。
+
+官方出处搜索：配置了 Actions secret `EXA_API_KEY`（2026-10-15 已配置）时调用 Exa REST `POST https://api.exa.ai/search`（`type:auto` + `objective`，不取正文，只要结果网址），调用方以 `site:` 写的登记官方站点与 X 账号转成 `includeDomains`；未配置密钥时用 Exa 匿名 MCP 端点。两者限流或出错时改用 OpenRouter 联网搜索插件（免费模型，约 $0.007/次），按次预留并入账到同一月度付费上限，每轮最多 `OPENROUTER_SEARCH_PER_RUN`（默认 6）次。线索研判只附线索提到的平台的已有条目；`MODEL_OUTPUT_LIMIT` 为 8192，给推理型模型留出输出余量。
+
+微信公众号文章：云端直读、Jina、Exa `/contents` 均被微信拦截（“环境异常”验证页或“微信扫一扫可打开此内容”外壳；2026-10-16 实测 Exa 返回 status=error）。`fetchPage` 识别这两种拦截页，不把它们当正文；读取器保留 Exa 尝试。只有公众号原文的线索立即转人工（`manualNow`），结论附可读到的原文，Telegram 审核提醒置顶为「⚡ 公众号福利：点开一键快速上架」，后台线索卡的快速上架表单预填链接、标题与备注。诊断某个网址能否被生产读取器读到：`gh workflow run collect.yml -f probe_urls=<网址,…>`（只读取并打印方式、长度与正文开头，不运行采集，不输出密钥；排队时会取代同组尚在等待的定时任务）。
+
+已收录内容不反复交给模型：官方页面只有出现上次快照里没有的羊毛相关句子时才重新抽取（删句、换序、空白变化只更新快照，计 `unchangedPages`）；已批准条目被重读且全部原文摘录仍在页面上时不再提交（`rereadUnchanged`），身份侧同一官方页面重读按 `same_source_reread` 沿用已批准版本；线索自身网址就是某条已批准条目的证据原文（同一网址或同一条 X 帖子）时直接关联、不调用模型（`leadsLinkedByUrl`）。自动受阻复核只处理 3 天内的线索，管理员补录和管理员手动重试不受限，更早的线索留在后台列表。
+
+线索关联已有重置条目时按事件日期硬性校验（流水线三条路径及 Worker 复核结果），不同轮次降为人工处理。运行统计中复核/身份队列的等待与重试记入 `backlogDeferred`，不再使整轮 `coverageDegraded`；信源未抓、研判未执行、异常和核验失败仍算覆盖不完整。
 
 ## Discord 官方公告采集
 

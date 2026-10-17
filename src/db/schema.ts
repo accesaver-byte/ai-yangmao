@@ -21,6 +21,10 @@ export const platforms = sqliteTable('platforms', {
   staffHandles: text('staff_handles', { mode: 'json' }).$type<string[]>().notNull().default(sql`'[]'`),
   wechat: text('wechat'),
   notes: text('notes'),
+  /** Parent company used to group product platforms in public lists (0043). */
+  company: text('company'),
+  /** Product names that identify this platform in leads, e.g. ZCode -> zhipu (0043). */
+  aliases: text('aliases', { mode: 'json' }).$type<string[]>().notNull().default(sql`'[]'`),
   createdAt: text('created_at').notNull().default(now),
   updatedAt: text('updated_at').notNull().default(now),
 });

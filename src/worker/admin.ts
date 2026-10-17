@@ -12,11 +12,12 @@ import {noticeIdentities,pendingIdentityNotices,identityReviewAlerts,identityGua
 import {canonicalOffers,resolveCanonicalOffer,entityOfferVersion} from './identity/canonical';
 import { identityAdminRoutes } from './identity/routes';
 import { screeningAdminRoutes } from './screening/routes';
+import { reviewStats } from './review-stats';
 import { IdentityService } from './identity/service';
 import { IdentityError } from './identity/store';
 import { sha256,stableJson } from '../shared/identity/normalize';
 import { publicationError, validateStoredOffer } from './publication';
-import {leadTask,leadReviewVersion,leadReviewDue,type LeadResolution} from '../shared/lead-review';
+import {ADMIN_RETRY_REASON,WECHAT_FAST_TRACK_REASON,leadTask,leadReviewVersion,leadReviewDue,type LeadResolution} from '../shared/lead-review';
 import { leadPriority } from '../shared/leads';
 import { isReviewField } from '../shared/spec';
 import { createComment, removeComment, legacyNoteStatement, commentMutationGuard, commentBodyLimit } from './comments';
@@ -34,6 +35,8 @@ import { haoScore } from '../shared/score';
 import { officialTier, officialReviewDue } from '../shared/official-review';
 import { sameBenefit } from '../shared/dedupe';
 import { parseValuation } from '../shared/valuation';
+import { offerRefFromInput } from '../shared/offer-ref';
+import { sourceHealthReason, sourceUnhealthy } from '../shared/source-health';
 import type { Env } from './index';
 import { advanceFastTrack, completeFastTrack, createFastTrack, FastTrackError, fastTrackHeld, listFastTrack, retryFastTrack } from './fast-track';
 
@@ -99,6 +102,7 @@ admin.use('*', async (c, next) => {
 
 admin.route('/identity',identityAdminRoutes);
 admin.route('/screening', screeningAdminRoutes);
+admin.get('/review-stats', async c => c.json(await reviewStats(c.env.DB, Math.min(30, Math.max(1, Number(c.req.query('days') ?? 7) || 7)))));
 admin.route('/memberships',membershipAdminRoutes);
 
 admin.get('/whoami', c => c.json({ role: c.get('role'), who: c.get('who') }));
@@ -212,7 +216,7 @@ admin.get('/queue', async c => {
       }),
     ];
   const pendingCards=[...new Map(legacyCards.map(c=>[c.id,c])).values()];
-  const leadTasks=(await canonicalLeadProjection(c.env.DB,await d.select().from(s.leads).where(eq(s.leads.status,'reviewing')))).filter(l=>!l.resolution?.identityTaskIds?.length).sort((a,b)=>Number(b.resolution?.status==='manual')-Number(a.resolution?.status==='manual')||leadPriority(a)-leadPriority(b)||a.id-b.id).map(leadTask);
+  const leadTasks=(await canonicalLeadProjection(c.env.DB,await d.select().from(s.leads).where(eq(s.leads.status,'reviewing')))).filter(l=>!l.resolution?.identityTaskIds?.length).sort((a,b)=>Number(b.resolution?.status==='manual')-Number(a.resolution?.status==='manual')||leadPriority(a)-leadPriority(b)||b.id-a.id).map(leadTask); // 同组内新线索在前：只追最新福利（2026-10-16）
   const paused=await c.env.DB.prepare("SELECT count(*) n FROM benefit_entities e JOIN offers o ON o.id=e.canonical_offer_id WHERE e.state='active' AND e.current_approved_version_id IS NOT NULL AND (o.review_state<>'approved' OR o.withdrawn_at IS NOT NULL)").first<{n:number}>();
   const cards=[...pendingCards,...managedCards];
   const counts={activities:pendingCards.length+identityTasks.length,leadReview:leadTasks.length,newLeads,paused:paused?.n??0};
@@ -555,14 +559,23 @@ admin.post('/leads/:id/resolve',async c=>{
   if(!l||!['new','reviewing'].includes(l.status)||leadReviewVersion(l)!==body.data.expectedVersion)return c.json({error:'线索状态已更新，请刷新'},409);
   if(l.resolution?.identityTaskIds?.length)return c.json({error:'请逐项处理身份审核任务，不能用整条线索覆盖候选决定'},409);
   const b=body.data;
+  // 关联目标可以粘贴条目网址、4 位短码或完整 ID（2026-10-15 管理员粘贴条目链接被拒）。
+  if(b.offerId){
+    const ref=offerRefFromInput(b.offerId),[exact]=await d.select({id:s.offers.id}).from(s.offers).where(eq(s.offers.id,ref));
+    let id=exact?.id;
+    if(!id){const matches=(await d.select({id:s.offers.id}).from(s.offers)).filter(o=>shortCode(o.id)===ref.toLowerCase());if(matches.length>1)throw new AmbiguousShortCode(matches.map(o=>o.id));id=matches[0]?.id;}
+    if(!id)return c.json({error:'找不到这个条目：请粘贴条目网址、4 位短码或完整 ID'},400);
+    b.offerId=id;
+  }
   const originOfferId=b.offerId;
   if(b.offerId)b.offerId=(await resolveCanonicalOffer(c.env.DB,b.offerId)).offerId;
-  if(b.outcome==='linked'&&(!b.offerId||!(await d.select().from(s.offers).where(eq(s.offers.id,b.offerId))).length))return c.json({error:'请填写已存在的完整活动ID'},400);
+  if(b.outcome==='linked'&&(!b.offerId||!(await d.select().from(s.offers).where(eq(s.offers.id,b.offerId))).length))return c.json({error:'请填写要关联的条目：网址、4 位短码或完整 ID'},400);
   const resolution:LeadResolution={status:b.outcome==='retry'?'retry':b.outcome,jobId:crypto.randomUUID(),attempts:0,inconclusive:0,checkedAt:new Date().toISOString(),nextAttemptAt:b.outcome==='retry'?new Date().toISOString():null,reason:b.reason,queries:l.resolution?.queries??[],candidates:l.resolution?.candidates??[],evidenceUrl:l.resolution?.evidenceUrl,quote:l.resolution?.quote,offerIds:b.offerId?[b.offerId]:(l.resolution?.offerIds??[]),originOfferIds:originOfferId?[originOfferId]:(l.resolution?.originOfferIds??l.resolution?.offerIds??[])};
   if(c.env.IDENTITY_MODE==='enforce'&&b.outcome==='closed'){await closeIdentityLead(c.env.DB,l,resolution,l.raw??l.title??resolution.reason??'管理员关闭线索',{actor:c.get('who')});return c.json({ok:true,identityHandled:true});}
   const changed=await d.update(s.leads).set({status:b.outcome==='linked'?'linked':b.outcome==='closed'?'rejected':'reviewing',resolution,offerId:b.offerId??l.offerId})
     .where(and(eq(s.leads.id,l.id),eq(s.leads.status,l.status),sql`COALESCE(${s.leads.resolution},'')=COALESCE(${l.resolution?JSON.stringify(l.resolution):null},'')`)).returning({id:s.leads.id});
-  return changed.length?c.json({ok:true}):c.json({error:'线索已更新，请刷新'},409);
+  const linked=b.outcome==='linked'&&b.offerId?(await d.select({id:s.offers.id,title:s.offers.title}).from(s.offers).where(eq(s.offers.id,b.offerId)))[0]:undefined;
+  return changed.length?c.json({ok:true,...(linked?{offer:{id:linked.id,code:shortCode(linked.id),title:linked.title}}:{})}):c.json({error:'线索已更新，请刷新'},409);
 });
 admin.post('/leads/:id/:action{dismiss|reviewing|retry}', async c => {
   const action=c.req.param('action'),d=db(c.env),[l]=await d.select().from(s.leads).where(eq(s.leads.id,Number(c.req.param('id'))));
@@ -570,7 +583,7 @@ admin.post('/leads/:id/:action{dismiss|reviewing|retry}', async c => {
   const body=await c.req.json().catch(()=>({}));
   if(!['new','reviewing'].includes(l.status)||body.expectedVersion!==leadReviewVersion(l))return c.json({error:'线索版本已变化或缺少版本，请刷新后处理'},409);
   if(l.resolution?.identityTaskIds?.length)return c.json({error:'请使用身份任务或拒绝决定的显式重开接口'},409);
-  const resolution:LeadResolution={status:action==='dismiss'?'closed':'retry',jobId:crypto.randomUUID(),attempts:0,inconclusive:0,checkedAt:new Date().toISOString(),nextAttemptAt:action==='dismiss'?null:new Date().toISOString(),reason:String(body.reason??(action==='dismiss'?'管理员忽略线索':'管理员要求重新官方核验')).slice(0,1000),queries:[],candidates:[]};
+  const resolution:LeadResolution={status:action==='dismiss'?'closed':'retry',jobId:crypto.randomUUID(),attempts:0,inconclusive:0,checkedAt:new Date().toISOString(),nextAttemptAt:action==='dismiss'?null:new Date().toISOString(),reason:String(body.reason??(action==='dismiss'?'管理员忽略线索':ADMIN_RETRY_REASON)).slice(0,1000),queries:[],candidates:[]};
   if(action==='dismiss'){
     const ownerLabel=ownerRejectInput(body as {reasonCategory?:unknown;reasonCode?:unknown});
     if(!ownerLabel)return c.json({error:'请选择拒绝类别'},400);
@@ -623,6 +636,37 @@ admin.post('/sources/:id/auto-publish', async c => {
 
 type NoticeKind = 'digest' | 'urgent';
 const TOP = { standing: 5, rising: 3, lastcall: 3 }; // 飞书日报三个榜各推几条
+export const IDENTITY_BACKLOG_MAX = 20, IDENTITY_BACKLOG_MAX_HOURS = 48; // 查重卡积压提醒阈值
+
+/**
+ * 飞书日报「今日专题」（2026-10-16）：原常驻榜每天取同样的前 5 条常驻额度，内容天天一样。改为按日轮换类型；
+ * 当天可领不足 3 条的专题跳过；同一专题再次轮到时从下一批条目开始，避免重复。榜单键仍为 standing。
+ */
+type ThemeOffer = { type: string; audience: string; requirements: string[]; modalities: string[] };
+export const DAILY_THEMES: { key: string; title: string; short: string; match: (o: ThemeOffer) => boolean }[] = [
+  { key: 'newuser', title: '🎁 今日专题 · 新人注册礼', short: '新人礼', match: o => o.type === 'new' },
+  { key: 'member', title: '👑 今日专题 · 会员与老用户福利', short: '会员福利', match: o => o.type === 'perk' || o.type === 'gift' || o.audience === 'old' },
+  { key: 'standing', title: '🏆 今日专题 · 常驻额度（一直能薅）', short: '常驻额度', match: o => o.type === 'standing' },
+  { key: 'limited', title: '⏳ 今日专题 · 限时免费开放', short: '限时免费', match: o => o.type === 'free' || o.type === 'trial' },
+  { key: 'student', title: '🎓 今日专题 · 学生与教师专享', short: '学生专享', match: o => o.requirements.includes('student') },
+  { key: 'media', title: '🎨 今日专题 · 图像、视频与语音', short: '多模态', match: o => o.modalities.some(m => m !== 'text') },
+  { key: 'nobarrier', title: '🆓 今日专题 · 零门槛直接领', short: '零门槛', match: o => o.requirements.length === 1 && o.requirements[0] === 'none' },
+  { key: 'apply', title: '📝 今日专题 · 申请制资助', short: '申请制', match: o => o.type === 'apply' },
+];
+const THEME_MIN = 3;
+/** Pick the day's theme and its window of items; `pool` is already sorted best-first. */
+export function dailyTheme<T extends { o: ThemeOffer }>(pool: T[], now: Date, size: number): { theme: (typeof DAILY_THEMES)[number]; items: T[] } {
+  const day = Math.floor(Date.parse(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now) + 'T00:00:00Z') / 86400_000);
+  // Rotate over the themes that have enough claimable perks today, so a thin theme never makes its neighbour repeat.
+  const viable = DAILY_THEMES.map(theme => ({ theme, list: pool.filter(x => theme.match(x.o)) })).filter(t => t.list.length >= THEME_MIN);
+  if (viable.length) {
+    const { theme, list } = viable[day % viable.length];
+    const start = (Math.floor(day / viable.length) * size) % list.length; // the theme's next turn shows the next batch
+    return { theme, items: [...list.slice(start), ...list.slice(0, start)].slice(0, size) };
+  }
+  const fallback = DAILY_THEMES.find(t => t.key === 'standing')!;
+  return { theme: fallback, items: pool.filter(x => fallback.match(x.o)).slice(0, size) };
+}
 type NoticeChannel = 'telegram' | 'feishu';
 type NoticeStage = 'new' | 'changed' | 'ending' | 'ended' | 'urgent';
 type NoticeMark = { offerId: string; stage: NoticeStage; messageId?: string;eventId?:string;eventKey?:string;entityId?:string;versionId?:string|null;publicationRevision?:number;generation?:number };
@@ -679,17 +723,19 @@ export async function buildNotice(env: Env, kind: NoticeKind, channel: NoticeCha
   marks = marks.filter(mark => !blocked.has(key(mark)) && !blockedItems.has(mark.offerId)).sort((a, b) => key(a).localeCompare(key(b)));
   for (const stage of Object.keys(out) as NoticeStage[]) out[stage] = out[stage].filter(item => marks.some(mark => mark.offerId === item.id && mark.stage === stage));
   // 飞书日报：三个榜，都按薅度分排。
-  //   常驻榜：全部可领的常驻额度取前 5（每天都排，不记推送）
+  //   今日专题（原常驻榜）：按日轮换类型（新人礼、会员福利、常驻额度、限时免费…），每个专题取 5 条（每天都排，不记推送）
   //   新星榜：最近 14 天新上架、还没推送过的取前 3（没选上的之后还有机会）
   //   末班车榜：3 天内结束的限时活动取前 3
   // 条款变化和已结束不进飞书日报（Telegram 照旧）。
-  let moreCount = 0;
+  let moreCount = 0, theme: { key: string; title: string; short: string } | null = null;
   if (kind === 'digest' && String(channel).startsWith('feishu')) {
     const scored = approved.filter(o=>!blockedItems.has(o.id)).map(o => ({ o, st: liveStatus(o, now), score: haoScore(o, now) })).sort((a, b) => b.score - a.score);
     const item = (x: typeof scored[number]) => ({ ...view(x.o, names[x.o.platformId] ?? x.o.platformId, now), score: x.score });
     const used = new Set<string>();
     const pick = (list: typeof scored, n: number) => { const got = list.filter(x => !used.has(x.o.id)).slice(0, n); got.forEach(x => used.add(x.o.id)); return got; };
-    const standing = pick(scored.filter(x => x.o.type === 'standing' && isClaimable(x.st)), TOP.standing);
+    const today = dailyTheme(scored.filter(x => isClaimable(x.st)), now, TOP.standing);
+    theme = { key: today.theme.key, title: today.theme.title, short: today.theme.short };
+    const standing = pick(today.items, TOP.standing);
     const freshPool = scored.filter(x => isClaimable(x.st) && !has(x.o.id, 'new') && !has(x.o.id, 'urgent') && now.getTime() - Date.parse(x.o.discoveredAt) <= 14 * 86400_000);
     const rising = pick(freshPool, TOP.rising);
     const lastcall = pick(scored.filter(x => x.st === 'ending' && !has(x.o.id, 'ending') && !has(x.o.id, 'urgent')), TOP.lastcall);
@@ -753,11 +799,17 @@ export async function buildNotice(env: Env, kind: NoticeKind, channel: NoticeCha
     const proposals = await d.select().from(s.offerProposals).where(sql`NOT EXISTS(SELECT 1 FROM benefit_entities e WHERE e.canonical_offer_id=offer_proposals.offer_id)`);
     const unresolved = await d.select().from(s.leads).where(inArray(s.leads.status,['new','reviewing']));
     leadBacklog = unresolved.length;
+    // Identity backlog (2026-10-16): warn on day one of a pile-up, not at 90 open cards. Once a day at most.
+    const identityBacklog = await env.DB.prepare("SELECT count(*) n, min(created_at) oldest FROM review_tasks WHERE state IN ('open','checking','manual')").first<{ n: number; oldest: string | null }>();
+    const oldestHours = identityBacklog?.oldest ? Math.floor((now.getTime() - Date.parse(identityBacklog.oldest)) / 3600_000) : 0;
+    const backlogAlert: ReviewAlert[] = identityBacklog && (identityBacklog.n > IDENTITY_BACKLOG_MAX || oldestHours > IDENTITY_BACKLOG_MAX_HOURS)
+      ? [{ key: `backlog:identity:${now.toISOString().slice(0, 10)}`, priority: 0, title: `🚨 查重积压：${identityBacklog.n} 张卡待处理，最久已等 ${oldestHours} 小时`, state: '积压提醒：先处理有截止日期的卡', url: 'https://ai-yangmao.com/#admin' }] : [];
     reviewAlerts = [
+      ...backlogAlert,
       ...await identityReviewAlerts(env.DB,[...announced,...inherited.announcedReviewKeys]),
       ...awaiting.map(o=>({ key: o.officialReview && (o.officialReview.status === 'matched' || (o.officialReview.status!=='checking'&&!o.officialReview.nextAttemptAt)) ? `offer:${o.id}:official:${o.officialReview.jobId}` : `offer:${o.id}`, priority: reviewRank(o), title: `[${shortCode(o.id)}] ${o.title}`, state: o.officialReview?.status==='unresolved'&&!o.officialReview.nextAttemptAt?'官方复核待人工核对':'待审', url: `https://ai-yangmao.com/#admin-offer-${encodeURIComponent(o.id)}` })),
       ...proposals.filter(p=>p.diff.some(x=>isReviewField(x.field))).map(p=>({ key: `proposal:${p.offerId}:${JSON.stringify(p.diff)}`, priority: 2, title: String(p.candidate.title ?? p.offerId), state: '条款更新待审', url: `https://ai-yangmao.com/#admin-offer-${encodeURIComponent(p.offerId)}` })),
-      ...unresolved.filter(l=>!l.resolution?.identityTaskIds?.length&&(leadPriority(l)<=1||l.resolution?.status==='manual')).sort((a,b)=>leadPriority(a)-leadPriority(b)||b.id-a.id).map(l=>({ key: `lead:${l.id}:${l.resolution?.status==='manual'?'manual:'+l.resolution.jobId:l.status}`, priority: 1, title: `#${l.id} ${l.title ?? ''}`, state: l.status==='reviewing' ? (l.resolution?.status==='manual'?'线索待你判断':'线索正在自动复核') : '重要线索，尚未研判', url: 'https://ai-yangmao.com/#admin' })),
+      ...unresolved.filter(l=>!l.resolution?.identityTaskIds?.length&&(leadPriority(l)<=1||l.resolution?.status==='manual')).sort((a,b)=>leadPriority(a)-leadPriority(b)||b.id-a.id).map(l=>({ key: `lead:${l.id}:${l.resolution?.status==='manual'?'manual:'+l.resolution.jobId:l.status}`, priority: wechatHandoff(l) ? 0 : 1, title: `#${l.id} ${l.title ?? ''}`, state: wechatHandoff(l) ? '⚡ 公众号福利：点开一键快速上架' : l.status==='reviewing' ? (l.resolution?.status==='manual'?'线索待你判断':'线索正在自动复核') : '重要线索，尚未研判', url: 'https://ai-yangmao.com/#admin' })),
     ].filter(a=>!announced.has(a.key));
     // 重要线索先提醒，余下待审分批发完；单条失败不堵住其他审核提醒。
     reviewAlerts.sort((a,b)=>(a.priority ?? 2)-(b.priority ?? 2));
@@ -772,9 +824,10 @@ export async function buildNotice(env: Env, kind: NoticeKind, channel: NoticeCha
   marks=marks.map(mark=>{const e=identities.get(mark.offerId);return e?{...mark,...identityGuard(e),eventKey:mark.eventKey??`offer:${e.id}:${e.publication_revision}:${mark.stage}:${channel}`}:mark;});
   const itemIds=new Set(Object.values(out).flat().map(o=>o.id));const identityGuards=[...identities.values()].filter(e=>itemIds.has(e.canonical_offer_id)).map(identityGuard);
   const empty = !reviewAlerts.length && !d1Alert && !marks.length && !out.standing.length && !out.rising.length && !out.lastcall.length && (kind === 'urgent' || channel !== 'telegram' || (!pendingCount && !suggestAutoPublish.length && !needsVerificationCount && !coverageDegraded));
-  return { kind, channel, identityGuards, items: out, marks, moreCount, d1Alert, pendingCount, reviewAlerts, leadBacklog, suggestAutoPublish, needsVerificationCount, coverageDegraded, empty, blockedCount: blocked.size+inherited.blocked.size,identityDeliveryConflicts:inherited.conflicts };
+  return { kind, channel, identityGuards, items: out, marks, moreCount, theme, d1Alert, pendingCount, reviewAlerts, leadBacklog, suggestAutoPublish, needsVerificationCount, coverageDegraded, empty, blockedCount: blocked.size+inherited.blocked.size,identityDeliveryConflicts:inherited.conflicts };
 }
 
+const wechatHandoff=(l:{resolution?:{status?:string;reason?:string}|null})=>l.resolution?.status==='manual'&&!!l.resolution.reason?.startsWith(WECHAT_FAST_TRACK_REASON);
 /** 预览是纯读取，不能仅凭获取消息就把内容记为已发送。 */
 admin.get('/notify', async c => {
   const channel = c.req.query('channel') === 'feishu' ? 'feishu' : 'telegram';
@@ -904,8 +957,8 @@ admin.get('/health', async c => {
   const [lastOk] = await d.select().from(s.runs).where(and(eq(s.runs.kind, 'collect'), eq(s.runs.ok, true))).orderBy(desc(s.runs.finishedAt)).limit(1);
   const [lastAttempt] = await d.select().from(s.runs).where(eq(s.runs.kind, 'collect')).orderBy(desc(s.runs.startedAt)).limit(1);
   const allSources = await d.select({ id: s.sources.id, failStreak: s.sources.failStreak, lastError: s.sources.lastError, lastOkAt: s.sources.lastOkAt,
-    kind: s.sources.kind, url: s.sources.url, autoPublish: s.sources.autoPublish, cleanStreak: s.sources.cleanStreak, enabled: s.sources.enabled }).from(s.sources);
-  const failing = allSources.filter(source => source.enabled && (source.failStreak >= 3 || !source.lastOkAt || Date.now() - Date.parse(source.lastOkAt) > 12 * 3600_000));
+    kind: s.sources.kind, url: s.sources.url, autoPublish: s.sources.autoPublish, cleanStreak: s.sources.cleanStreak, enabled: s.sources.enabled, createdAt: s.sources.createdAt }).from(s.sources);
+  const failing = allSources.filter(source => source.enabled && sourceUnhealthy(source)).map(source => ({ ...source, reason: sourceHealthReason(source) }));
   const hours = lastOk?.finishedAt ? (Date.now() - Date.parse(lastOk.finishedAt)) / 3600_000 : null;
   const today = new Date().toISOString().slice(0, 10);
   const b = await c.env.DB.prepare("SELECT COALESCE(SUM(CASE WHEN substr(started_at,1,10)=?1 THEN tokens END),0) AS t, COALESCE(SUM(CASE WHEN substr(started_at,1,7)=?2 THEN cost_cny END),0) AS c FROM runs").bind(today, today.slice(0, 7)).first<{ t: number; c: number }>();

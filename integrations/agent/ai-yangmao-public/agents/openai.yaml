@@ -1,4 +1,4 @@
 interface:
   display_name: "AI 羊毛牧场"
   short_description: "查询最新 AI 羊毛日报，按用途与个人资格筛选免费额度，核对领取步骤和官方来源"
-  default_prompt: "使用 $ai-yangmao-public 查找适合我的 AI 免费权益并说明领取条件。"
+  default_prompt: "使用 $ai-yangmao-public 先问清我的用途和条件，再找适合我的 AI 免费权益并说明领取条件。"

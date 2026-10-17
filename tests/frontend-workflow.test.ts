@@ -888,7 +888,8 @@ it('an unverified single candidate can be explicitly rejected early only after a
  expect(writes).toHaveLength(1);expect(writes[0].url).toContain('/identity/tasks/known-duplicate/resolve');
  expect(writes[0].body).toMatchObject({action:'reject',expectedRevision:2,reasonCategory:'duplicate',scope:{kind:'claim',candidateId:'candidate-1'}});
 });
-it('an unresolved candidate can be marked as suspected duplicate without a rejection or publication decision',async()=>{
+// 2026-10-16: the owner's mark used to be a hint the system never acted on; it now closes the card as a duplicate at once.
+it('an owner mark on an unresolved card closes it as a duplicate without waiting for the system',async()=>{
  const writes:any[]=[];const task={id:'hint-task',kind:'identity',revision:4,candidateDisplay:{title:'可疑重复'},reviewPreparation:{state:'needs_source',canDecide:false,reason:'来源待核'},sources:[{candidateId:'candidate',final_url:'https://example.invalid/notice',provenance:{sourceVerified:false},quotes:[]}]};
  const f=fixture((url,init)=>{if(init?.method==='POST'){writes.push({url,body:JSON.parse(String(init.body))});return {revision:5,state:'manual'};}return url.includes('/identity/tasks')?{tasks:[task]}:queue([]);});await f.run('admQueue()');
  const card=f.document.querySelector('[data-identity-task="hint-task"]')!;
@@ -896,8 +897,11 @@ it('an unresolved candidate can be marked as suspected duplicate without a rejec
  mark!.dispatchEvent(new f.window.Event('click'));expect(writes).toHaveLength(0);
  (card.querySelector('[data-identity-reason]') as HTMLInputElement).value='与此前核对过的同一官方活动重复';
  mark!.dispatchEvent(new f.window.Event('click'));await pause();
- expect(writes).toHaveLength(1);expect(writes[0].url).toContain('/identity/tasks/hint-task/hint');
- expect(writes[0].body).toMatchObject({expectedRevision:4,kind:'suspected_duplicate',reason:'与此前核对过的同一官方活动重复'});
+ expect(writes).toHaveLength(1);expect(writes[0].url).toContain('/identity/tasks/hint-task/resolve');
+ expect(writes[0].body).toMatchObject({action:'reject',expectedRevision:4,reasonCategory:'duplicate',reason:'管理员确认重复：与此前核对过的同一官方活动重复'});
+ expect(writes[0].body.scope).toBeUndefined(); // the whole card, every source
+ expect(card.textContent).toContain('已结案');
+ const byCategory=card.querySelector('[data-identity-hint="previously_rejected"]') as HTMLButtonElement;expect(byCategory.disabled).toBe(true);
 });
 it('completed identity scan offers named historical activities without asking the reviewer to type an internal ID',async()=>{
  const requests:any[]=[];

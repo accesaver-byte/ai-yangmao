@@ -40,6 +40,10 @@ on:
         description: '只筛选这些 screening item id（逗号分隔，留空为队列）'
         type: string
         default: ''
+      probe_urls:
+        description: '诊断：只用生产读取逻辑抓取这些网址并打印结果（逗号分隔），不运行采集'
+        type: string
+        default: ''
 
 concurrency:
   group: collect
@@ -56,7 +60,15 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: 读取诊断
+        if: ${{ inputs.probe_urls != '' && inputs.probe_urls != null }}
+        run: npx tsx scripts/probe-fetch.ts
+        env:
+          PROBE_URLS: ${{ inputs.probe_urls }}
+          EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
       - name: 运行采集管线
+        if: ${{ inputs.probe_urls == '' || inputs.probe_urls == null }}
         run: npm run collect
         env:
           API_BASE: ${{ secrets.API_BASE }}
@@ -77,7 +89,7 @@ jobs:
           DEEPSEEK_MODEL: ${{ vars.DEEPSEEK_MODEL || 'deepseek-flash' }}
           DEEPSEEK_PRICE_IN: ${{ vars.DEEPSEEK_PRICE_IN || '3' }}
           DEEPSEEK_PRICE_OUT: ${{ vars.DEEPSEEK_PRICE_OUT || '10' }}
-          MONTHLY_COST_CAP_CNY: ${{ vars.MONTHLY_COST_CAP_CNY || '10' }}
+          MONTHLY_COST_CAP_CNY: ${{ vars.MONTHLY_COST_CAP_CNY || '72' }}
           EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
           JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}

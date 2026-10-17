@@ -234,3 +234,47 @@ it('a mismatched known fact cannot starve the preparation queue through a permit
   expect((await f.call('ingest/identity-preparations/'+created.body.taskId+'/scan',{requestId:'stale-known-scan',expectedRevision:0})).status).toBe(409);
  }finally{f.sqlite.close();}
 });
+// 2026-10-16: a source the system could not re-verify left the card locked in "系统核查中" for days (one card re-checked 19
+// times) while the owner's buttons stayed hidden. It is now handed to the owner, with the vendor's activities to pick from.
+it('an official page that no longer shows the quote hands the card to the owner instead of looping',async()=>{
+ const f=auditFixture();try{
+  const text='Campaign signup-2026 grants 10 USD to new individual accounts.';
+  const observed=await f.call('ingest/observations',{requestId:'unverifiable-source',originalUrl:'https://vendor.example/js',finalUrl:'https://vendor.example/js',text,sourceId:'vendor-source',fetchKind:'indirect',observedAt:'2026-10-12T10:00:00Z'});
+  const facts=canonicalTermsSchema.parse({schemaVersion:'terms-v1',issuerProductId:unknown,mechanism:unknown,benefitPools:[],eligibility:unknown,geography:unknown,claimChannels:unknown,costs:unknown,claimWindow:unknown,occurrenceAnchor:unknown});
+  const c=await f.candidate('unverifiable-benefit',observed.body.observationId,text,facts,{id:'unverifiable-benefit',title:'只在脚本渲染页上出现的权益'});
+  const task=(await f.call('ingest/identity-candidates/'+c.candidateId+'/resolve',{requestId:'unverifiable-create'})).body;
+  const missing=await f.call('ingest/identity-preparations/'+task.taskId+'/scan',{requestId:'unverifiable-first',expectedRevision:0});expect(missing.body.status).toBe('needs_source');
+  const {sha256}=await import('../src/shared/identity/normalize');
+  const shell='Loading… please enable JavaScript to use this app.';
+  const evidence={sourceText:shell,sourceFetch:{originalUrl:'https://vendor.example/js',finalUrl:'https://vendor.example/js',fetchedUrl:'https://vendor.example/js',method:'direct',sourceVerified:true,truncated:false,contentHash:await sha256(shell)}};
+  const handed=await f.call('ingest/identity-preparations/'+task.taskId+'/scan',{requestId:'unverifiable-fresh',expectedRevision:missing.body.revision,freshSource:evidence});
+  expect(handed.status,JSON.stringify(handed.body)).toBe(200);expect(handed.body.status).toBe('source_unverifiable');
+  const card=(await f.call('admin/identity/tasks',undefined,true)).body.tasks.find((t:any)=>t.id===task.taskId);
+  expect(card.reviewPreparation).toMatchObject({state:'source_unverifiable',canDecide:true});
+  expect(card.reviewPreparation.reason).toContain('找不到候选摘录的原文');
+  expect(Date.parse(card.reviewPreparation.nextAttemptAt)-Date.now()).toBeGreaterThan(2*86400_000);
+  // Not offered to the preparation queue again until the re-check is due; a routine re-scan does not lock it again.
+  expect((await f.call('ingest/identity-preparations')).body.tasks.some((t:any)=>t.id===task.taskId)).toBe(false);
+  const again=await f.call('ingest/identity-preparations/'+task.taskId+'/scan',{requestId:'unverifiable-again',expectedRevision:handed.body.revision});
+  expect(again.body.status).toBe('source_unverifiable');
+  for(const table of ['offers','review_decisions'])expect(f.sqlite.prepare('SELECT count(*) n FROM '+table).get()).toEqual({n:0});
+  // A plain rejection needs only a category and a reason — no original rejection ID (2026-10-16 即梦 card).
+  const rejected=await f.call('admin/identity/tasks/'+task.taskId+'/resolve',{requestId:'unverifiable-reject',expectedRevision:again.body.revision,action:'reject',reasonCategory:'duplicate',reason:'与已上架的注册礼重复'},true);
+  expect(rejected.status,JSON.stringify(rejected.body)).toBe(200);
+  expect(f.sqlite.prepare('SELECT state FROM review_tasks WHERE id=?').get(task.taskId)).toEqual({state:'resolved'});
+ }finally{f.sqlite.close();}
+});
+it('a candidate whose source is not a registered official address goes to the owner, not into an endless wait',async()=>{
+ const f=auditFixture();try{
+  const text='Campaign media-2026 grants 10 USD to new individual accounts.';
+  const observed=await f.call('ingest/observations',{requestId:'media-source',originalUrl:'https://news.example/vendor-promo',finalUrl:'https://news.example/vendor-promo',text,sourceId:'vendor-source',fetchKind:'indirect',observedAt:'2026-10-12T10:00:00Z'});
+  const facts=canonicalTermsSchema.parse({schemaVersion:'terms-v1',issuerProductId:unknown,mechanism:unknown,benefitPools:[],eligibility:unknown,geography:unknown,claimChannels:unknown,costs:unknown,claimWindow:unknown,occurrenceAnchor:unknown});
+  const c=await f.candidate('media-benefit',observed.body.observationId,text,facts,{id:'media-benefit',title:'媒体转述的权益',evidence:{url:'https://news.example/vendor-promo',tier:'media',capturedAt:'2026-10-12T10:00:00Z',excerpts:{benefit:text}}});
+  const task=(await f.call('ingest/identity-candidates/'+c.candidateId+'/resolve',{requestId:'media-create'})).body;
+  const scan=await f.call('ingest/identity-preparations/'+task.taskId+'/scan',{requestId:'media-first',expectedRevision:0});
+  expect(scan.body.status).toBe('source_unverifiable');
+  const card=(await f.call('admin/identity/tasks',undefined,true)).body.tasks.find((t:any)=>t.id===task.taskId);
+  expect(card.reviewPreparation).toMatchObject({state:'source_unverifiable',canDecide:true});
+  expect(card.reviewPreparation.reason).toContain('不是该厂商已登记的官方地址');
+ }finally{f.sqlite.close();}
+});

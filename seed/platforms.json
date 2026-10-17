@@ -925,6 +925,13 @@
    ],
    "staff": [],
    "wechat": "http://weixin.qq.com/r/b3XTywHEo1zcrUWo9yB9"
+  },
+  {
+   "id": "feishu",
+   "name": "字节跳动 飞书 Lark",
+   "type": "tool",
+   "site": "https://www.feishu.cn",
+   "x": []
   }
  ],
  "sources": [

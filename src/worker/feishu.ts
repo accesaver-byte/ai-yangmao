@@ -145,7 +145,8 @@ const PER_CARD = 6; // 每张卡片最多几条，避免超过飞书卡片大小
 /** 把一次通知排成若干张飞书卡片（每张最多 PER_CARD 条羊毛）。 */
 export async function buildCards(env: Env, notice: Pick<ClaimedNotice, 'kind' | 'items'>, now = new Date()) {
   // 飞书日报：常驻榜、新星榜、末班车榜（admin.ts buildNotice 已按薅度分挑好）
-  const BOARDS: [string, string][] = [['standing', '🏆 常驻榜 · 一直能薅的'], ['rising', '🌟 新星榜 · 新上架'], ['lastcall', '🚌 末班车榜 · 3 天内结束']];
+  const theme = (notice as { theme?: { title: string; short: string } | null }).theme ?? { title: '🏆 常驻榜 · 一直能薅的', short: '常驻榜' };
+  const BOARDS: [string, string][] = [['standing', theme.title], ['rising', '🌟 新星榜 · 新上架'], ['lastcall', '🚌 末班车榜 · 3 天内结束']];
   const ranked = notice.kind === 'digest' && BOARDS.some(([k]) => (notice.items[k as keyof typeof notice.items] ?? []).length);
   const all = ranked
     ? BOARDS.flatMap(([k, label]) => (notice.items[k as keyof typeof notice.items] ?? []).map(it => ({ it, k, label })))
@@ -163,7 +164,7 @@ export async function buildCards(env: Env, notice: Pick<ClaimedNotice, 'kind' | 
     if (p === 0) {
       const counts = SECTIONS.map(([k, label]) => [label, (notice.items[k] ?? []).length] as const).filter(([, c]) => c).map(([l, c]) => `${l} ${c} 条`).join('　');
       const more = (notice as { moreCount?: number }).moreCount ?? 0;
-      elements.push(md(`${ranked ? `常驻榜 ${notice.items.standing?.length ?? 0} 条 · 新星榜 ${notice.items.rising?.length ?? 0} 条 · 末班车榜 ${notice.items.lastcall?.length ?? 0} 条${more ? `\n另有 ${more} 条新上架没进榜，在网站上看` : ''}` : counts}\n<font color='grey'>${compact ? '完整条款与领取步骤请点击每条的详情链接。' : '英文内容已翻译成中文，以官方页面为准。'}</font>`), { tag: 'hr' });
+      elements.push(md(`${ranked ? `今日专题「${theme.short}」${notice.items.standing?.length ?? 0} 条 · 新星榜 ${notice.items.rising?.length ?? 0} 条 · 末班车榜 ${notice.items.lastcall?.length ?? 0} 条${more ? `\n另有 ${more} 条新上架没进榜，在网站上看` : ''}` : counts}\n<font color='grey'>${compact ? '完整条款与领取步骤请点击每条的详情链接。' : '英文内容已翻译成中文，以官方页面为准。'}</font>`), { tag: 'hr' });
     }
     let current = '';
     slice.forEach(({ it, k, label }, i) => {

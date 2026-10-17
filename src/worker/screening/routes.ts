@@ -7,6 +7,8 @@ import { putProfile } from './profiles';
 import { compareQueueOrder, latestUsefulReviewAt, systemDueAt } from '../../shared/screening/urgency';
 import { buildMemoryPage, reviewerNames } from './memory';
 import { ScreeningStore } from './store';
+import { confirmAutoClosed, listAutoClosed, markWronglyClosed } from './spot-check';
+import { activeTitleRules, applyRuleToOpenLeads, createIntakeRule, listIntakeRules, retireIntakeRule, RuleError, suggestIntakeRules } from './intake-rules';
 import type { Env } from '../index';
 
 export const screeningIngestRoutes = new Hono<{ Bindings: Env }>();
@@ -84,7 +86,8 @@ screeningIngestRoutes.get('/queue', async c => {
     const prev = chosen.get(row.id);
     if (!prev || (row.candidate_id ?? '\uffff') < (prev.candidate_id ?? '\uffff')) chosen.set(row.id, row);
   }
-  const platforms = (await c.env.DB.prepare(`SELECT id, name FROM platforms WHERE status='approved'`).all<{ id: string; name: string }>()).results;
+  const platforms = (await c.env.DB.prepare(`SELECT id, name, aliases FROM platforms WHERE status='approved'`).all<{ id: string; name: string; aliases: string }>()).results
+    .map(p => ({ id: p.id, name: p.name, aliases: JSON.parse(p.aliases || '[]') as string[] }));
   const items = [...chosen.values()].filter(row => !ids.length || ids.includes(row.id)).map(row => ({
     itemId: row.id, subject: row.subject_kind === 'lead' ? leadSubject(row, platforms) : taskSubject(row), tier: row.tier, discoveredAt: row.discovered_at,
     latestUsefulReviewAt: latestUsefulReviewAt(row.deadline, row.tier),
@@ -127,7 +130,7 @@ function clipText(value: string, stripReview: boolean): { text: string; truncate
   return { text: body.slice(0, TEXT_LIMIT), truncated: body.length > TEXT_LIMIT };
 }
 
-function leadSubject(row: QueueRow, platforms: { id: string; name: string }[]) {
+function leadSubject(row: QueueRow, platforms: { id: string; name: string; aliases?: string[] }[]) {
   const clipped = clipText(row.lead_raw ?? '', true);
   const title = row.lead_title ?? '';
   const platformIds = platforms.filter(platform => platformMentioned(`${title}\n${clipped.text}`, platform)).map(platform => platform.id);
@@ -162,4 +165,39 @@ screeningAdminRoutes.put('/profiles/:platformId', async c => {
   const saved = await putProfile(c.env.DB, c.req.param('platformId'), { ...body.data.profile, platformId: c.req.param('platformId') }, body.data.expectedRevision, c.get('who'));
   if (!saved) return c.json({ error: '平台画像已更新，请刷新后再保存' }, 409);
   return c.json({ ok: true, revision: body.data.expectedRevision + 1 });
+});
+
+/** Intake filter: owner-approved title rules that close junk leads on arrival (admin only; reviewers are not allow-listed). */
+screeningAdminRoutes.get('/rules', async c => c.json({ rules: await listIntakeRules(c.env.DB), suggestions: await suggestIntakeRules(c.env.DB) }));
+screeningAdminRoutes.post('/rules', async c => {
+  const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
+  try {
+    const rule = await createIntakeRule(c.env.DB, body, c.get('who'));
+    const swept = rule.status === 'active' && body.applyToOpen === true ? await applyRuleToOpenLeads(c.env.DB, rule) : { closed: 0, more: false };
+    return c.json({ rule, ...swept });
+  } catch (error) {
+    if (error instanceof RuleError) return c.json({ error: error.message, conflicts: error.conflicts }, error.status);
+    throw error;
+  }
+});
+screeningAdminRoutes.post('/rules/:id/apply', async c => {
+  const rule = (await activeTitleRules(c.env.DB)).find(r => r.id === c.req.param('id'));
+  if (!rule) return c.json({ error: '没有这条启用中的规则' }, 404);
+  return c.json(await applyRuleToOpenLeads(c.env.DB, rule));
+});
+screeningAdminRoutes.post('/rules/:id/retire', async c => {
+  const body = await c.req.json().catch(() => ({})) as { reason?: string };
+  try { await retireIntakeRule(c.env.DB, c.req.param('id'), body.reason || '管理员停用', c.get('who')); return c.json({ ok: true }); }
+  catch (error) { if (error instanceof RuleError) return c.json({ error: error.message }, error.status); throw error; }
+});
+
+/** Spot-check of leads the system closed by itself (admin only). */
+screeningAdminRoutes.get('/spot-check', async c => c.json(await listAutoClosed(c.env.DB, Math.min(30, Math.max(1, Number(c.req.query('days') ?? 7) || 7)))));
+screeningAdminRoutes.post('/spot-check/confirm', async c => {
+  try { return c.json(await confirmAutoClosed(c.env.DB, await c.req.json().catch(() => null), c.get('who'))); }
+  catch (error) { if (error instanceof z.ZodError) return c.json({ error: '抽查确认格式不正确（每次最多 15 条）' }, 400); throw error; }
+});
+screeningAdminRoutes.post('/spot-check/:id/wrong', async c => {
+  const result = await markWronglyClosed(c.env.DB, Number(c.req.param('id')), c.get('who'));
+  return result.ok ? c.json(result) : c.json({ error: '没有这条已关闭的线索' }, 404);
 });

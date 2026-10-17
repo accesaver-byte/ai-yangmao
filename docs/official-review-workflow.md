@@ -29,7 +29,7 @@ flowchart LR
 
 ## 官方身份与活动身份
 
-- 搜索使用Exa远程MCP HTTP，不依赖本机浏览器、Cookie、mcporter或聊天工具。默认无密钥；可配置Actions secret `EXA_API_KEY`，搜索账户费用与模型月预算分开。
+- 搜索不依赖本机浏览器、Cookie、mcporter或聊天工具。配置了Actions secret `EXA_API_KEY`（2026-10-15已配置）时用Exa REST `/search`，登记的官方站点与X账号以`includeDomains`限定，Exa费用走Exa账户；无密钥时用Exa匿名MCP端点。Exa限流或出错时改用OpenRouter联网搜索，费用计入模型月度付费上限，每轮最多6次。
 - 明确的官方出处优先，随后搜索结果和已登记官方页面。重试优先未读候选，最多保留10个候选记录。搜索服务受限时本轮冷却，仍读取其余条目的已知链接；模型/总时限达到上限时收尾。
 - 搜索摘要和模型猜的URL仅发现候选。必须重新读取正文，校验跳转后的身份；Jina回退还需来源元信息吻合、无错误警告。普通采集中的间接正文不因此获官方等级。
 - 官方网站与登记信源限定域名，兄弟域名须登记。X须是已登记官方/员工账号的具体帖子；共享托管按仓库/路径限定，用户可发布的issue、PR、discussion、wiki及评论不能因位于官方仓库而获官方等级。
@@ -68,7 +68,7 @@ gh workflow run collect.yml --ref main -f fast_leads=true -f official_review_lim
 
 ## 尚未形成条目的受阻线索
 
-`reviewing`线索由每小时/全量采集中的`runLeadReviews`处理，不要求已有offer。旧积压自动入队，每轮默认4条（`LEAD_REVIEW_LIMIT`），每条最多3分钟、最多3个官方正文，整段最多12分钟。先读原始官方URL，再搜索官网/文档及登记X账号；已读候选有记录，下轮推进未读页面。保留重要线索优先和最老积压名额。
+`reviewing`线索由每小时/全量采集中的`runLeadReviews`处理，不要求已有offer。3天内的积压自动入队（更早的线索留在后台，管理员补录与手动重试不受限），每轮条数由`LEAD_REVIEW_LIMIT`决定（代码默认4，Actions变量现为10），每条最多3分钟、最多3个官方正文，整段最多12分钟。先读原始官方URL，再搜索官网/文档及登记X账号；已读候选有记录，下轮推进未读页面。保留重要线索优先和最老积压名额。
 
 结果保存在`leads.resolution`，包括任务ID、原因、原文依据、关联活动、尝试数及下次时间：
 

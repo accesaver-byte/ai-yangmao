@@ -62,6 +62,29 @@ const typeColor = ty => TK.s[TYPES[ty].slot - 1];
 const ptypeColor = pt => TK.s[PTYPE[pt].slot - 1];
 const typeVar = ty => `var(--s${TYPES[ty].slot})`;
 
+/** 按公司分组的平台（0043）：同一公司的多个产品合成一组；只列出有条目的平台。 */
+function platformGroups(selected = '') {
+  const has = new Set(OFFERS.map(o => o.p)), groups = new Map(), rows = [];
+  for (const p of PLATFORMS.filter(p => has.has(p.id) || p.id === selected)) {
+    if (p.company) { if (!groups.has(p.company)) groups.set(p.company, []); groups.get(p.company).push(p); } else rows.push({ name: p.name, items: [p] });
+  }
+  for (const [company, items] of groups) rows.push(items.length > 1 ? { name: company, company, items } : { name: items[0].name, items });
+  return rows.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+}
+/** 公司分组里只显示产品名：去掉名称开头的公司前缀（如“MiniMax 海螺 AI”→“海螺 AI”）；“阿里云百炼”这类无空格的品牌名保持不变。 */
+const COMPANY_PREFIX = { 阿里巴巴: ['阿里巴巴', '阿里'], 字节跳动: ['字节跳动', '字节'] };
+function productName(p) {
+  const prefixes = [...(COMPANY_PREFIX[p.company] || []), p.company].filter(Boolean);
+  for (const prefix of prefixes) if (p.name.startsWith(prefix + ' ')) return p.name.slice(prefix.length + 1);
+  return p.name;
+}
+function platformOptionsHtml(selected = '') {
+  const opt = (value, label) => `<option value="${esc(value)}" ${selected === value ? 'selected' : ''}>${esc(label)}</option>`;
+  return opt('', '全部平台') + platformGroups(selected).map(g => g.company
+    ? `<optgroup label="${esc(g.company)}">${opt('co:' + g.company, `${g.company}（全部）`)}${g.items.map(p => opt(p.id, productName(p))).join('')}</optgroup>`
+    : opt(g.items[0].id, g.items[0].name)).join('');
+}
+
 /* ---------- 数据准备 ---------- */
 let PMAP = {}, OMAP = {}, LAST_OK = null;
 /** 数据加载后调用：建立索引，计算依赖数据的统计。 */
@@ -834,7 +857,7 @@ function filtered() {
   if (f.ty) list = list.filter(o => o.ty === f.ty);
   if (f.m) list = list.filter(o => o.m.includes(f.m));
   if (f.c) list = list.filter(o => o.c === f.c);
-  if (f.p) list = list.filter(o => o.p === f.p);
+  if (f.p) list = list.filter(o => f.p.startsWith('co:') ? o.plat?.company === f.p.slice(3) : o.p === f.p);
   if (f.value === 'official') list = list.filter(o => valueGroup(o) === 'official' && hasDisplayValue(o));
   if (f.value === 'scenario') list = list.filter(o => valueGroup(o) === 'scenario' && hasDisplayValue(o));
   if (f.value === 'unknown') list = list.filter(o => !hasDisplayValue(o));
@@ -857,7 +880,7 @@ function pAll() {
     ${sel('f-m', '模态', [['', '全部模态'], ...Object.entries(MODAL)])}
     ${sel('f-req', '门槛', [['', '不限'], ['zero', '零门槛'], ['nooversea', '不需要海外条件'], ['nopay', '不用花钱'], ['special', '学生 / 企业 / 邀请 / 定向']])}
     ${sel('f-c', '领取方式', [['', '全部方式'], ...Object.entries(CLAIM)])}
-    ${sel('f-p', '平台', [['', '全部平台'], ...PLATFORMS.filter(p => OFFERS.some(o => o.p === p.id)).map(p => [p.id, p.name])])}
+    <label class="field" for="f-p">平台<select id="f-p" data-f="p">${platformOptionsHtml(ALLF.p)}</select></label>
     ${sel('f-st', '状态', [['claimable', '现在或即将可领'], ['', '全部状态'], ['active', '进行中'], ['ending', '即将结束'], ['upcoming', '未开始'], ['standing', '常驻'], ['ended', '已结束']])}
     ${sel('f-value', '估值方法', [['', '全部方法'], ['official', '仅看官方价值'], ['scenario', '用量估算'], ['unknown', '价值待定']])}
   </div>
@@ -876,9 +899,7 @@ function pAll() {
       await loadData({ fresh: true });
       prepare();
       if (!platform.isConnected || route()[0] !== 'all') return;
-      const choices = PLATFORMS.filter(p => OFFERS.some(o => o.p === p.id) || p.id === ALLF.p);
-      platform.innerHTML = `<option value="" ${!ALLF.p ? 'selected' : ''}>全部平台</option>` + choices.map(p =>
-        `<option value="${esc(p.id)}" ${ALLF.p === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+      platform.innerHTML = platformOptionsHtml(ALLF.p);
       draw();
     } catch (_) {
       ({ OFFERS, PLATFORMS, META, COVERAGE } = previous);
@@ -1618,7 +1639,9 @@ function pCoverage() {
   <section>${secH('正在监控')}<div class="card tbl" style="padding:4px 8px"><table><thead><tr><th>渠道</th><th>方式</th><th>规模</th><th>状态</th></tr></thead><tbody>${rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`).join('')}</tbody></table></div></section>
   <section>${secH('官方页面监控', `${plist.length} 个平台`)}<div class="chips">${plist.map(id => PMAP[id] ? `<a class="chip" href="#platform-${id}">${esc(PMAP[id].name)}</a>` : '').join('')}</div></section>
   <section>${secH('已知缺口')}<div class="rows">${gaps.map(g => `<div class="orow" style="grid-template-columns:auto minmax(0,1fr)">${stBadge(g[2], g[2] === 'critical' ? '✕' : '!', g[2] === 'critical' ? '暂不覆盖' : '部分覆盖')}<span class="t">${g[0]}<small>${g[1]}</small></span></div>`).join('')}</div></section>
-  <section>${secH('平台白名单', `${PLATFORMS.length} 个`)}<div class="chips">${PLATFORMS.map(p => `<a class="chip" href="#platform-${p.id}">${etagSvg(ptypeColor(p.type)).replace('<svg ', '<svg style="width:10px;height:12px" ')}${esc(p.name)}</a>`).join('')}</div></section>`;
+  <section>${secH('平台白名单', `${platformGroups().length} 家（只列有条目的平台）`)}<div class="chips">${platformGroups().map(g => g.company
+    ? `<span class="chip"><b>${esc(g.company)}</b>&nbsp;${g.items.map(p => `<a href="#platform-${p.id}">${esc(productName(p))}</a>`).join(' · ')}</span>`
+    : `<a class="chip" href="#platform-${g.items[0].id}">${etagSvg(ptypeColor(g.items[0].type)).replace('<svg ', '<svg style="width:10px;height:12px" ')}${esc(g.items[0].name)}</a>`).join('')}</div></section>`;
 }
 
 /* ---------- 后台 ---------- */
@@ -1645,7 +1668,7 @@ async function adm(path, body) {
   const r = await fetch('/api/admin' + path, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: 'Bearer ' + ADM.token, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
   if (r.status === 401) { ADM.token = ''; ADM.role = ''; admStore.clear(); throw new Error('管理员密钥不正确，请重新登录'); }
-  if (!r.ok) throw new Error((j.error || ('请求失败 ' + r.status)) + (Array.isArray(j.issues) && j.issues.length ? '：' + j.issues.map(i => `${FIELD_L[i.path?.[0]] || i.path?.join('.') || ''} ${i.message}`.trim()).join('；') : ''));
+  if (!r.ok) throw Object.assign(new Error((j.error || ('请求失败 ' + r.status)) + (Array.isArray(j.issues) && j.issues.length ? '：' + j.issues.map(i => `${FIELD_L[i.path?.[0]] || i.path?.join('.') || ''} ${i.message}`.trim()).join('；') : '')), { body: j });
   return j;
 }
 const TIER_L = { site: '官网', docs: '官方文档', official: '官方账号', staff: '员工账号', media: '媒体 / 社区转述', tested: '管理员实测（我亲自领到过）' };
@@ -1811,9 +1834,9 @@ function leadTaskCard(l) {
     <p class="small">${esc(l.note||'将读取原文、核对官方出处及已有活动')}</p><a href="${esc(l.url)}" target="_blank" rel="noopener">查看原始线索 ↗</a>
     ${r?.evidenceUrl?`<p class="small"><a href="${esc(r.evidenceUrl)}" target="_blank" rel="noopener">处理依据 ↗</a> ${esc(r.quote||'')}</p>`:''}
     <details style="margin-top:8px"><summary>处理这条线索</summary><label class="field">处理依据<input data-lead-reason placeholder="例如：同一次发放的进度说明"></label>
-    <label class="field">关联活动ID<input data-lead-offer placeholder="已核对的完整活动 ID"></label>
+    <label class="field">关联已有条目<input data-lead-offer placeholder="粘贴条目网址、4 位短码（如 2r48）或完整 ID"></label>
     <div class="row"><button class="btn sm" data-lead-resolve="retry">重新官方核验</button><button class="btn sm" data-lead-resolve="linked">关联已有活动</button><button class="btn sm" data-lead-resolve="closed">结束线索</button></div><p class="small" role="status" data-lead-feedback></p></details>
-    ${ADM.role==='admin'?`<details style="margin-top:8px"><summary>⚡ 快速上架（我已确认官方或亲测）</summary>${fastTrackFormHtml({inline:true,benefit:l.title||''})}</details>`:''}</div>`;
+    ${ADM.role==='admin'?`<details style="margin-top:8px"><summary>⚡ 快速上架（我已确认官方或亲测）</summary>${fastTrackFormHtml({inline:true,benefit:l.title||'',url:l.url||'',note:(l.note||'').slice(0,1000)})}</details>`:''}</div>`;
 }
 function bindLeadTasks(box,tasks){
   box.querySelectorAll('[data-lead-task]').forEach(card=>{
@@ -1822,10 +1845,10 @@ function bindLeadTasks(box,tasks){
     card.querySelectorAll('[data-lead-resolve]').forEach(button=>button.addEventListener('click',async()=>{
       const outcome=button.dataset.leadResolve,reason=card.querySelector('[data-lead-reason]').value.trim(),offerId=card.querySelector('[data-lead-offer]').value.trim(),message=card.querySelector('[data-lead-feedback]');
       if(outcome!=='retry'&&reason.length<2){message.textContent='请先填写处理依据';return;}
-      if(outcome==='linked'&&!offerId){message.textContent='请填写已核对的活动ID';return;}
+      if(outcome==='linked'&&!offerId){message.textContent='请填写要关联的条目：网址、短码或 ID';return;}
       const buttons=card.querySelectorAll('[data-lead-resolve]');buttons.forEach(b=>b.disabled=true);
-      try{await adm(`/leads/${l.id}/resolve`,{expectedVersion:l.reviewVersion,outcome,reason:reason||'管理员要求重新官方核验',...(offerId?{offerId}:{})});
-        message.textContent=outcome==='retry'?'已排入自动官方复核，下轮处理':outcome==='linked'?'已关联，处理结果已保存':'已结束，处理依据已保存';
+      try{const done=await adm(`/leads/${l.id}/resolve`,{expectedVersion:l.reviewVersion,outcome,reason:reason||'管理员要求重新官方核验',...(offerId?{offerId}:{})});
+        message.textContent=outcome==='retry'?'已排入自动官方复核，下轮处理':outcome==='linked'?`已关联到 [${done?.offer?.code??''}] ${done?.offer?.title??''}`:'已结束，处理依据已保存';
         card.dataset.resolved='1';
       }catch(e){message.textContent=e.message;buttons.forEach(b=>b.disabled=false);}
     }));
@@ -1847,7 +1870,7 @@ async function refreshAdminPlatforms() {
       if (!response.ok) throw new Error(`平台列表 ${response.status}`);
       const data = await response.json();
       if (!Array.isArray(data.platforms)) throw new Error('平台列表格式不正确');
-      PLATFORMS = data.platforms.map(p => ({ id: p.id, name: p.name, type: p.type, site: p.site || '', x: (p.xHandles || []).join(' · ') }));
+      PLATFORMS = data.platforms.map(p => ({ id: p.id, name: p.name, type: p.type, site: p.site || '', x: (p.xHandles || []).join(' · '), company: p.company || '', aliases: p.aliases || [] }));
       PMAP = Object.fromEntries(PLATFORMS.map(p => [p.id, p]));
       $$('#admBody select[name="platformId"]').forEach(select => {
         const id = select.value, name = select.selectedOptions?.[0]?.textContent || id;
@@ -1885,23 +1908,30 @@ function renderIdentityTasks(box,data,append=false,managedIds=new Set()){
  <details><summary>查看结构化事实与去重详情</summary>${identityFactsTable(t.previousFacts,t.facts||candidate?.facts)}</details>
  <p class="small">人工保留字段（只读）：${(t.protectedFields||[]).map(x=>esc(FIELD_L[x]||x)).join('、')||'无'}</p>
  <details><summary>过往决定</summary>${(t.decisions||[]).map(d=>`<p>${esc(d.action)}：${esc(d.reason_text||d.reason_code)}<br><small>${esc(d.scope_json)}</small></p>`).join('')||'<p>暂无决定</p>'}</details>
+ ${(t.sources?.length||0)>1&&needsIdentity?`<p class="small warn-note" data-identity-group>同一活动的 ${t.sources.length} 条报道已合并到这张卡：你的决定作用于所选来源，其余来源按重复一并结案；拒绝则整组拒绝。若其中有不同的活动，请先在“本次处理的候选”里逐条处理。</p>`:''}
  <details open><summary>来源与原文（${t.sources?.length||0}${t.sourcesComplete===false?'＋':''}）</summary>${(t.sources||[]).map(source=>`<p class="small">${t.reviewPreparation?.sourceReverified&&(t.reviewPreparation.sourceReverifiedCandidateIds||[t.reviewPreparation.sourceCandidateId]).includes(source.candidateId)?'✓ 已重新核验这一段官方原文':source.provenance?.sourceVerified?'✓ 已核实发放方官方来源':'! 来源尚待核实'}</p><p><a href="${esc(source.final_url)}" target="_blank" rel="noopener">${esc(source.final_url)}</a></p>${(source.quotes||[]).map(q=>`<blockquote style="white-space:pre-wrap">${esc(q.quote)}</blockquote>`).join('')}`).join('')}${t.reviewPreparation?.sourceReverified&&t.reviewPreparation.sourceUrl?`<p class="small">最近重新核验的官方页面：<a href="${esc(t.reviewPreparation.sourceUrl)}" target="_blank" rel="noopener">${esc(t.reviewPreparation.sourceUrl)}</a></p>`:''}${t.sourcesComplete===false?'<p>更多来源已保存；当前显示前 10 条。</p>':''}</details>
  ${!t.sources?.length&&t.display?.evidence?`<details open><summary>候选证据（请核对原文）</summary><p>${esc(t.display.evidence.url)}</p>${Object.values(t.display.evidence.excerpts||{}).filter(Boolean).map(q=>`<blockquote>${esc(q)}</blockquote>`).join('')}</details>`:''}
  <label class="field">拒绝类别<select data-identity-category><option value="">拒绝时必选</option>${RC.filter(([k]) => !['not_ai', 'wrong_type'].includes(k)).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></label>
  <label class="field">决定说明<input data-identity-reason placeholder="拒绝或身份判断时填写依据"></label>
  ${needsIdentity&&canDecide?`<label class="field">本次处理的候选<select data-identity-candidate>${(t.sources||[]).map((c,i)=>`<option value="${esc(c.candidateId)}" ${i===0?'selected':''}>${esc(c.final_url)}</option>`).join('')}</select></label><label class="field">可能对应的旧活动${t.historyOptions?`<select data-identity-target><option value="">先选择或保持为空</option>${historyOptions.map(o=>`<option value="${esc(o.entityId)}">${esc(o.title)} · ${esc(o.valueText)}${o.offerId?' · '+esc(o.offerId):''}</option>`).join('')}</select>`:'<input data-identity-target placeholder="请输入已核对的内部活动身份 ID">'}</label><label class="field">已核对发放平台<select data-identity-product><option value="">保留候选原值</option>${PLATFORMS.map(p=>`<option value="${esc(p.id)}" ${t.reviewPreparation?.productId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><label class="field">已核对领取机制<select data-identity-mechanism><option value="">保留候选原值</option>${Object.entries({signup_grant:'注册赠额',recurring_quota:'周期额度',referral:'邀请奖励',identity_grant:'身份福利',trial:'试用',temporary_free_access:'限时免费',extra_reset:'额外重置',application_grant:'申请额度',other:'其他'}).map(([key,label])=>`<option value="${key}">${label}</option>`).join('')}</select></label>`:''}
- ${needsIdentity&&canDecide&&ADM.role!=='reviewer'?'<label class="field">已核对的原拒绝决定 ID<input data-identity-claim-decision></label><button type="button" class="btn sm" data-identity-claim-search>查询已拒主张</button><div data-identity-claim-options></div>':''}
+ ${needsIdentity&&canDecide&&ADM.role!=='reviewer'?'<details data-identity-claim-advanced><summary class="small">高级（少用）：本候选就是以前某条被拒绝的主张</summary><p class="small muted">普通拒绝不需要这里。只有要把本候选挂到一条旧的拒绝决定上时才用。</p><label class="field">已核对的原拒绝决定 ID<input data-identity-claim-decision></label><button type="button" class="btn sm" data-identity-claim-search>查询已拒主张</button><div data-identity-claim-options></div><button type="button" class="btn sm" data-identity-action="same_claim">关联原拒绝主张</button></details>':''}
  ${t.visibilityBlocked?'<p role="alert">活动已暂停发布，请管理员先明确重开。</p>':''}
- ${needsIdentity&&!canDecide&&!t.visibilityBlocked?'<details data-identity-early-hint><summary>我已核对：标记疑似重复或曾被拒绝</summary><p class="small">请先在“决定说明”写清依据。这里只保存人工线索，系统继续核对；不会自动合并、拒绝或上架。</p><button type="button" class="btn sm" data-identity-hint="suspected_duplicate">标记疑似重复</button><button type="button" class="btn sm" data-identity-hint="previously_rejected">标记疑似曾被拒绝</button></details>':''}
+ ${needsIdentity&&!canDecide&&!t.visibilityBlocked?'<details data-identity-early-hint open><summary>我已核对：直接结案（不必等系统）</summary><p class="small">在“决定说明”写清依据（如已上架条目的链接或短码）。点下即生效：整张卡（含所有来源）按所选原因拒绝结案，不会上架；属实的新福利请用下方 ⚡ 快速上架。</p><button type="button" class="btn sm" data-identity-hint="suspected_duplicate">确认重复并结案</button><button type="button" class="btn sm" data-identity-hint="previously_rejected">按所选拒绝类别结案</button></details>':''}
  ${earlyReject?'<details data-identity-early-review><summary>我已核实：提前拒绝此单个候选</summary><p class="small">仅当你已核对它与旧权益或原拒绝主张确实重复时使用。请写明依据；此操作记录新的人工拒绝，不会合并旧活动或自动上架。</p><button type="button" class="btn sm" data-identity-action="reject">预览拒绝此候选</button></details>':''}
- <div class="row review-actions">${(t.visibilityBlocked||!canDecide?[]:!needsIdentity?[['approve','预览通过'],['reject','预览拒绝']]:[...(t.historyOptions&&!historyOptions.length?[]:[['same','关联同一活动']]),['new','建立独立待审活动'],...(t.historyOptions&&!historyOptions.length?[]:[['distinct','确认与所选旧活动不同']]),...(ADM.role!=='reviewer'?[['same_claim','关联原拒绝主张']]:[]),['reject','预览拒绝']]).map(([a,l])=>`<button type="button" class="btn sm" data-identity-action="${a}">${l}</button>`).join('')}</div>
- <div data-identity-preview hidden></div><p role="status" data-identity-feedback></p>`;
+ ${canDecide&&!t.visibilityBlocked?'<p class="small muted" style="margin:6px 0 2px">选好后点下面一个按钮，再点出现的「✅ 确认提交」才会保存。</p>':''}
+ <div class="row review-actions">${(t.visibilityBlocked||!canDecide?[]:!needsIdentity?[['approve','预览通过'],['reject','预览拒绝']]:[...(t.historyOptions&&!historyOptions.length?[]:[['same','关联同一活动']]),['new','建立独立待审活动'],...(t.historyOptions&&!historyOptions.length?[]:[['distinct','确认与所选旧活动不同']]),['reject','拒绝（整张卡，只需类别和说明）']]).map(([a,l])=>`<button type="button" class="btn sm" data-identity-action="${a}">${l}</button>`).join('')}</div>
+ <div data-identity-preview hidden></div><p role="status" data-identity-feedback></p>
+ ${ADM.role==='admin'?`<details style="margin-top:8px" data-identity-fast-track><summary>⚡ 快速上架（我已确认官方或亲测）</summary><p class="small muted">上架后本查重任务按“与新条目重复”自动结案。</p>${fastTrackFormHtml({inline:true,platformId:t.candidateDisplay?.platformId||t.display?.platformId||'',url:t.candidateDisplay?.evidenceUrl||t.sources?.[0]?.final_url||t.display?.evidence?.url||'',benefit:String(t.candidateDisplay?.valueText||t.display?.valueText||t.candidateDisplay?.title||'').slice(0,500),title:String(t.candidateDisplay?.title||t.display?.title||'').slice(0,120)})}</details>`:''}`;
  box.append(card);
+ {const fast=card.querySelector('[data-identity-fast-track] [data-fast-track]');if(fast)bindFastTrackForm(fast,null,()=>{card.dataset.resolved='1';},{identityTaskId:t.id});}
  card.querySelectorAll('[data-identity-hint]').forEach(button=>button.addEventListener('click',async()=>{
   const reason=card.querySelector('[data-identity-reason]').value.trim(),feedback=card.querySelector('[data-identity-feedback]');
-  if(reason.length<8){feedback.textContent='请至少写 8 字说明疑似重复或曾被拒绝的依据';return;}
+  // 2026-10-16: a manual mark used to be only a hint the system never acted on. It now closes the card at once.
+  if(reason.length<8){feedback.textContent='请至少写 8 字依据（如已上架条目的链接或短码）';return;}
+  const duplicate=button.dataset.identityHint==='suspected_duplicate',category=duplicate?'duplicate':card.querySelector('[data-identity-category]')?.value||'';
+  if(!category){feedback.textContent='请先在“拒绝类别”选择原因';return;}
   button.disabled=true;
-  try{const result=await adm('/identity/tasks/'+encodeURIComponent(t.id)+'/hint',{requestId:'ui-identity-hint-'+Date.now()+'-'+Math.random().toString(36).slice(2),expectedRevision:t.revision,kind:button.dataset.identityHint,reason});t.revision=result.revision;feedback.textContent='人工线索已保存；仍待系统核对，不会自动处理。';}
+  try{await adm('/identity/tasks/'+encodeURIComponent(t.id)+'/resolve',{action:'reject',requestId:'ui-identity-close-'+Date.now()+'-'+Math.random().toString(36).slice(2),expectedRevision:t.revision,reasonCategory:category,reason:(duplicate?'管理员确认重复：':'管理员结案：')+reason});feedback.textContent='已结案：整张卡按'+(REASON_LABEL[category]||category)+'拒绝，不会上架。';card.querySelectorAll('button,input,select').forEach(b=>b.disabled=true);card.style.opacity=.5;}
   catch(error){feedback.textContent=error.message;button.disabled=false;}
  }));
  card.querySelector('[data-identity-prepare-now]')?.addEventListener('click',async event=>{
@@ -1945,12 +1975,20 @@ function renderIdentityTasks(box,data,append=false,managedIds=new Set()){
   const payload={action,requestId:'ui-'+Date.now()+'-'+Math.random().toString(36).slice(2),expectedRevision:t.revision,...(reason?{reason}:{}),...(action==='reject'?{reasonCategory,...(earlyReject?{scope:{kind:'claim',candidateId:t.sources[0].candidateId}}:{})}:{}),...(['same','new','distinct','same_claim'].includes(action)?{candidateId:card.querySelector('[data-identity-candidate]').value,...(action==='same_claim'?{decisionId:claimDecision}:target?{entityId:target}:{})}: {})};
   if(['same','new','distinct','same_claim'].includes(action)){
    const chosen=t.sources.find(s=>s.candidateId===payload.candidateId);const facts=JSON.parse(JSON.stringify(chosen?.facts||{}));const refs=(chosen?.quotes||[]).map(q=>q.id).filter(Boolean);const product=card.querySelector('[data-identity-product]').value,mechanism=card.querySelector('[data-identity-mechanism]').value;
-   if(['same','new','distinct'].includes(action)&&facts.mechanism?.state!=='known'&&!mechanism){feedback.textContent='先根据原文选择领取机制；不能只凭标题或金额决定活动身份';return;}
+   // "Same as a listed perk" is the owner's call (server owner-override): no mechanism needed, and no facts sent —
+   // attaching the platform select made the candidate's facts "known" and disabled that path (2026-10-16 即梦 card).
+   if(action!=='same'){
+   if(['new','distinct'].includes(action)&&facts.mechanism?.state!=='known'&&!mechanism){feedback.textContent='先在“已核对领取机制”里选择领取机制（建立新活动需要）';feedback.scrollIntoView?.({block:'center'});return;}
    if((product||mechanism)&&!refs.length){feedback.textContent='缺少可引用原文，请先补充证据';return;}
    if(product)facts.issuerProductId={state:'known',value:product,evidenceRefs:refs};if(mechanism)facts.mechanism={state:'known',value:mechanism,evidenceRefs:refs};if(product||mechanism)payload.facts=facts;
+   }
   }
-  const preview=card.querySelector('[data-identity-preview]');preview.hidden=false;preview.innerHTML=`<p>将按当前审核版本 ${t.revision} ${action==='approve'?'确认通过，发布本次条款':action==='reject'?earlyReject?'拒绝此单个候选并保留审计记录；不会合并旧活动或上架':'确认拒绝本次候选，保留历史决定':action==='same_claim'?'确认与原拒绝主张对应；复用原拒绝，符合补证规则时保持待审':'确认活动身份，保留待审状态'}。</p><button class="btn sm pri" data-identity-confirm>确认${action==='approve'?'通过':action==='reject'?'拒绝':'身份判断'}</button>`;
-  preview.querySelector('button').addEventListener('click',async event=>{const confirmButton=event.currentTarget;confirmButton.disabled=true;try{const result=await adm('/identity/tasks/'+encodeURIComponent(t.id)+'/resolve',payload);if(result.outcome==='deferred'&&result.retryable){feedback.textContent='历史决定尚未检查完，请继续检查；当前任务仍保持待审。';confirmButton.textContent='继续检查';confirmButton.disabled=false;return;}feedback.textContent='决定已保存';card.querySelectorAll('button,input,select').forEach(b=>b.disabled=true);}catch(error){feedback.textContent=error.message;confirmButton.disabled=false;}});
+  const preview=card.querySelector('[data-identity-preview]');preview.hidden=false;preview.innerHTML=`<p>将按当前审核版本 ${t.revision} ${action==='approve'?'确认通过，发布本次条款':action==='reject'?earlyReject?'拒绝此单个候选并保留审计记录；不会合并旧活动或上架':'确认拒绝本次候选，保留历史决定':action==='same_claim'?'确认与原拒绝主张对应；复用原拒绝，符合补证规则时保持待审':'确认活动身份，保留待审状态'}。</p><button class="btn pri" data-identity-confirm>✅ 确认提交${action==='approve'?'通过':action==='reject'?'拒绝':'身份判断'}</button>`;preview.style.border='1px solid var(--pri,#f5c518)';preview.style.padding='8px';preview.style.borderRadius='8px';preview.scrollIntoView?.({block:'center',behavior:'smooth'});
+  preview.querySelector('button').addEventListener('click',async event=>{const confirmButton=event.currentTarget;confirmButton.disabled=true;try{const result=await adm('/identity/tasks/'+encodeURIComponent(t.id)+'/resolve',payload);if(result.outcome==='deferred'&&result.retryable){feedback.textContent='历史决定尚未检查完，请继续检查；当前任务仍保持待审。';confirmButton.textContent='继续检查';confirmButton.disabled=false;return;}feedback.textContent='决定已保存';card.querySelectorAll('button,input,select').forEach(b=>b.disabled=true);
+   // Grouped card: the decision applies to the chosen source; the other reports of the same perk close as its duplicates in one call.
+   const others=['same','new','distinct'].includes(action)?(t.sources||[]).filter(x=>x.candidateId!==payload.candidateId):[];
+   if(others.length){try{await adm('/identity/tasks/'+encodeURIComponent(t.id)+'/resolve',{action:'reject',requestId:'ui-group-'+Date.now()+'-'+Math.random().toString(36).slice(2),expectedRevision:t.revision+1,reasonCategory:'duplicate',reason:`同组其余 ${others.length} 条来源与本次处理的来源为同一活动${result.canonicalOfferId?'（'+result.canonicalOfferId+'）':''}`});feedback.textContent=`决定已保存；同组其余 ${others.length} 条来源已按重复一并结案`;}catch(error){feedback.textContent=`决定已保存；同组其余 ${others.length} 条未能一并结案（${error.message}），请刷新后处理`;}}
+  }catch(error){feedback.textContent=error.message;confirmButton.disabled=false;}});
  }));
  }
  if(data.nextCursor){const more=document.createElement('button');more.className='btn sm';more.textContent='加载更多活动';box.append(more);more.addEventListener('click',async()=>{more.disabled=true;try{const page=await adm('/identity/tasks?cursor='+encodeURIComponent(data.nextCursor));more.remove();renderIdentityTasks(box,page,true,managedIds);}catch(error){more.disabled=false;more.textContent=error.message;}});}
@@ -2034,8 +2072,10 @@ async function admQueue() {
   const sugCount = k => q.pending.filter(o => (o.suggestion?.verdict || 'none') === k).length;
   const sugTabs = [['all', '全部', q.pending.length], ['approve', '建议通过', sugCount('approve')], ['history', '建议作为历史', sugCount('history')], ['reject', '建议拒绝', sugCount('reject')], ['judge', '需要你判断', sugCount('judge')], ['none', '未标注', sugCount('none')]].filter(([k, , n]) => k === 'all' || n);
   box.innerHTML = `<section class="card" data-review-summary><b>活动待审 <span data-activity-count>${counts.activities}</span> 项</b> · 线索复核 ${counts.leadReview} 条 · 暂停发布 ${counts.paused} 项<p class="small muted">活动待审包含系统补证和等待你决定；线索尚未形成活动，暂停发布不计入待审。新线索 ${counts.newLeads??q.newLeads} 条。</p></section>
+    ${ADM.role==='admin'?'<p class="small muted" data-review-stats>正在统计最近 7 天谁在审核…</p>':''}
+    ${ADM.role==='admin'?'<details data-intake-rules><summary>🚫 入口过滤规则（与 AI 无关、优惠券/购物券、中转站等线索一进来就关闭）</summary><div data-intake-body class="small muted">展开后读取…</div></details><details data-spot-check><summary>🔍 自动关闭抽查（最近 7 天，建议每周看一次）</summary><div data-spot-body class="small muted">展开后读取…</div></details>':''}
     ${q.leadTasks?.length?`<details data-lead-section><summary>线索复核 · ${counts.leadReview} 条</summary><p class="small muted">尚未形成条目的线索会自动读取原文、搜索官方出处并查重。暂时受阻会按时重试；需要判断的可在这里关联已有活动、结束线索或重新核验。</p>${q.leadTasks.slice(0,10).map(leadTaskCard).join('')}${q.leadTasks.length>10?`<details><summary>其余 ${q.leadTasks.length-10} 条线索复核</summary>${q.leadTasks.slice(10).map(leadTaskCard).join('')}</details>`:''}</details>`:''}
-    ${q.priorityLeads?.filter(l=>l.status==='new').length?`<section><h3>重要新线索 · 等待研判</h3>${q.priorityLeads.filter(l=>l.status==='new').map(l=>`<p>#${l.id} ${esc(l.title||'')} · 将在下一轮研判</p>`).join('')}</section>`:''}
+    ${q.priorityLeads?.filter(l=>l.status==='new').length?`<section><h3>重要新线索 · 等待研判</h3>${q.priorityLeads.filter(l=>l.status==='new').map(l=>`<div data-priority-lead="${l.id}"><p>#${l.id} ${esc(l.title||'')} · 将在下一轮研判</p>${ADM.role==='admin'?`<details style="margin:0 0 8px"><summary class="small">⚡ 快速上架（我已确认官方或亲测）</summary>${fastTrackFormHtml({inline:true,benefit:String(l.title||'').slice(0,500),url:l.url||''})}</details>`:''}</div>`).join('')}</section>`:''}
     ${sugTabs.length > 2 ? `<div class="seg" role="tablist" style="margin-bottom:12px;flex-wrap:wrap">${sugTabs.map(([k, l, n]) => `<button type="button" data-sugtab="${k}" aria-pressed="${(ADM.sug || 'all') === k}">${l} ${n}</button>`).join('')}</div>` : ''}
     ${q.pendingPlatforms.length ? `<div class="card" style="margin-bottom:12px"><h3>新平台待准入</h3>${q.pendingPlatforms.map(p => `<div class="row" style="justify-content:space-between;padding:6px 0"><span>${esc(p.name)}（${esc(p.id)}）${p.site ? ` · <a href="${esc(p.site)}" target="_blank" rel="noopener">官网</a>` : ''}</span><span class="row"><button class="btn sm good" data-plat="${p.id}:approve">准入</button><button class="btn sm bad" data-plat="${p.id}:reject">拒绝</button></span></div>`).join('')}</div>` : ''}
     ${q.suggestAutoPublish.map(x => `<div class="card" style="margin-bottom:12px"><span class="st warn"><b>!</b>建议放开</span> 信源 ${esc(x.id)} 已连续原样通过 ${x.cleanStreak} 条 <button class="btn sm" data-autopub="${x.id}">放开自动上架</button></div>`).join('')}
@@ -2045,6 +2085,10 @@ async function admQueue() {
   const identityBox=box.querySelector('[data-identity-slot]');identityBox.dataset.identityReview='';const remainingTasks=(identity.tasks||[]).filter(t=>!managedIds.has(t.id));if(remainingTasks.length||identity.error||identity.nextCursor)renderIdentityTasks(identityBox,{...identity,tasks:remainingTasks},false,managedIds);
   const pausedSection=document.createElement('details');pausedSection.dataset.pausedSection='';pausedSection.innerHTML=`<summary>暂停发布 · ${counts.paused} 项（无需日常处理）</summary>`;const holdsBox=document.createElement('section');pausedSection.append(holdsBox);box.append(pausedSection);renderVisibilityHolds(holdsBox,holds);if(holds.error)holdsBox.textContent='暂停活动读取失败：'+holds.error;
   bindLeadTasks(box,q.leadTasks||[]);
+  {const stats=box.querySelector('[data-review-stats]');if(stats)adm('/review-stats?days=7').then(r=>{stats.textContent=`最近 7 天 · 线索 ${r.leads.total}：系统处理 ${r.leads.system}、入口规则 ${r.leads.rule}、人工关闭 ${r.leads.owner}、待处理 ${r.leads.open} · 查重卡 ${r.identity.total}：你在网页 ${r.identity.web}、快速上架 ${r.identity.fastTrack}、代理/脚本 ${r.identity.agent}、系统 ${r.identity.system}、待处理 ${r.identity.open} · 免开卡：同页重读 ${r.avoided.sameSourceReread}、并入已有卡 ${r.avoided.groupedIntoOpenCard}`;}).catch(()=>{stats.remove();});}
+  {const spot=box.querySelector('[data-spot-check]');if(spot)spot.addEventListener('toggle',()=>{if(spot.open&&!spot.dataset.loaded){spot.dataset.loaded='1';loadSpotCheck(spot.querySelector('[data-spot-body]'));}});}
+  {const panel=box.querySelector('[data-intake-rules]');if(panel)panel.addEventListener('toggle',()=>{if(panel.open&&!panel.dataset.loaded){panel.dataset.loaded='1';loadIntakeRules(panel.querySelector('[data-intake-body]'));}});}
+  box.querySelectorAll('[data-priority-lead]').forEach(el=>{const fast=el.querySelector('[data-fast-track]');if(fast)bindFastTrackForm(fast,Number(el.dataset.priorityLead),()=>{el.dataset.resolved='1';});});
   const applySug = () => $$('[data-sug]', box).forEach(el => { if (el.closest('details')) return; el.style.display = !ADM.sug || ADM.sug === 'all' || el.dataset.sug === ADM.sug ? '' : 'none'; });
   $$('[data-sugtab]', box).forEach(b => b.addEventListener('click', () => { ADM.sug = b.dataset.sugtab; $$('[data-sugtab]', box).forEach(x => x.setAttribute('aria-pressed', x === b)); applySug(); }));
   applySug();
@@ -2264,18 +2308,88 @@ async function admLeads() {
 }
 /* ⚡ 快速上架：管理员担保的官方链接 + 主要权益，免费模型补其余字段，补齐即上架。 */
 const FT_STATE = { queued: '排队等模型读取', extracting: '模型读取中', publishing: '正在上架', needs_owner: '需要你补充', published: '已上架' };
+const SPOT_CATS = ['non_ai', 'relay_station', 'account_pool', 'personal_giveaway', 'ordinary_discount', 'paid_bundle', 'model_news_only', 'duplicate', 'expired'];
+async function loadSpotCheck(body) {
+  body.textContent = '正在读取…';
+  let data; try { data = await adm('/screening/spot-check?days=7'); } catch (e) { body.textContent = '读取失败：' + e.message; return; }
+  body.className = 'small';
+  const row = it => `<div data-spot="${it.id}" class="row" style="gap:6px;flex-wrap:wrap;align-items:center;padding:4px 0;border-bottom:1px solid var(--line,#333)"><a href="${esc(it.url)}" target="_blank" rel="noopener" style="flex:1;min-width:220px">${esc(it.title)}</a><span class="muted">${esc(it.origin)} · ${it.closedBy === 'rule' ? '入口规则' : '自动研判'}：${esc(it.reason.slice(0, 40))}</span><select data-spot-cat>${SPOT_CATS.map(k => `<option value="${k}" ${k === it.category ? 'selected' : ''}>${esc(REASON_LABEL[k] || k)}</option>`).join('')}</select><button class="btn sm" data-spot-wrong>✗ 误关</button><button class="btn sm" data-spot-fast>⚡ 上架</button></div>`;
+  const likely = data.items.filter(i => i.likely), rest = data.items.filter(i => !i.likely);
+  const group = (key, label, list, open) => list.length ? `<details ${open ? 'open' : ''} data-spot-group="${key}"><summary>${label} · ${list.length} 条</summary><p><button class="btn sm pri" data-spot-confirm>✅ 本组其余都关得对</button> <span role="status" data-spot-msg></span></p>${list.map(row).join('')}</details>` : '';
+  body.innerHTML = `<p class="muted">系统自己关闭、你还没看过的线索。先看“可能误关”（标题提到已知厂商或免费、额度、赠送等词）。确认关得对的会成为里程碑 2 的校准样本，类别请按实际选；误关的点 ⚡ 直接上架，或标“误关”。入口规则误关超过 10%（至少 10 次命中）会自动停用。</p>
+    ${group('likely', '⚠️ 可能误关', likely, true)}${group('rest', '其余自动关闭', rest, false)}${data.items.length ? '' : '<p class="muted">最近 7 天没有待抽查的自动关闭线索。</p>'}`;
+  const done = (el, text) => { el.style.opacity = .45; el.querySelectorAll('button,select').forEach(x => { x.disabled = true; }); if (text) el.insertAdjacentHTML('beforeend', `<span class="small">${esc(text)}</span>`); };
+  body.querySelectorAll('[data-spot]').forEach(el => {
+    const id = Number(el.dataset.spot), it = data.items.find(x => x.id === id);
+    el.querySelector('[data-spot-wrong]').addEventListener('click', async () => {
+      try { const r = await adm(`/screening/spot-check/${id}/wrong`, {}); el.dataset.handled = '1'; done(el, r.ruleRetired ? '已记为误关，该规则误关过多已自动停用' : '已记为误关'); } catch (e) { toast(e.message); }
+    });
+    el.querySelector('[data-spot-fast]').addEventListener('click', () => {
+      if (el.querySelector('[data-fast-track]')) return;
+      el.insertAdjacentHTML('beforeend', `<div style="flex-basis:100%">${fastTrackFormHtml({ inline: true, benefit: it.title.slice(0, 500), url: it.url })}</div>`);
+      bindFastTrackForm(el.querySelector('[data-fast-track]'), id, async () => { el.dataset.handled = '1'; await adm(`/screening/spot-check/${id}/wrong`, {}).catch(() => {}); });
+    });
+  });
+  body.querySelectorAll('[data-spot-confirm]').forEach(button => button.addEventListener('click', async () => {
+    const groupEl = button.closest('[data-spot-group]'), msg = groupEl.querySelector('[data-spot-msg]');
+    const rows = [...groupEl.querySelectorAll('[data-spot]')].filter(el => !el.dataset.handled);
+    button.disabled = true; let confirmed = 0;
+    try {
+      for (let i = 0; i < rows.length; i += 15) {
+        const chunk = rows.slice(i, i + 15);
+        const r = await adm('/screening/spot-check/confirm', { items: chunk.map(el => ({ id: Number(el.dataset.spot), category: el.querySelector('[data-spot-cat]').value })) });
+        confirmed += r.confirmed; chunk.forEach(el => { el.dataset.handled = '1'; done(el); }); msg.textContent = `已确认 ${confirmed} 条…`;
+      }
+      msg.textContent = `已确认 ${confirmed} 条关得对`;
+    } catch (e) { msg.textContent = e.message; button.disabled = false; }
+  }));
+}
+const INTAKE_CATS = ['non_ai', 'ordinary_discount', 'relay_station', 'account_pool', 'personal_giveaway'];
+async function loadIntakeRules(body) {
+  body.textContent = '正在读取…';
+  let data; try { data = await adm('/screening/rules'); } catch (e) { body.textContent = '读取失败：' + e.message; return; }
+  const active = data.rules.filter(r => r.status === 'active'), scope = r => r.scopeKind === 'global' ? '全部来源' : `仅 ${esc(r.scopeValue)}`;
+  const catOpts = sel => INTAKE_CATS.map(k => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(REASON_LABEL[k])}</option>`).join('');
+  body.className = 'small';
+  body.innerHTML = `<p class="muted">启用的规则在线索进入时按标题匹配，直接关闭，不再研判、搜索或进审核。建议来自你在线索阶段的拒绝（只学“非 AI、优惠券/折扣、中转站、账号池、个人分享”）；会命中已上架或已关联福利的规则会被拒绝创建。</p>
+    <h4>建议 · ${data.suggestions.length} 条</h4>${data.suggestions.map((g, i) => `<div class="card" data-intake-sug="${i}" style="margin:6px 0"><b>标题含「${esc(g.pattern.replace(/\\/g, ''))}」</b> · ${esc(REASON_LABEL[g.category])} · ${scope(g)} · 你已拒绝 ${g.hits} 条<ul>${g.examples.map(t => `<li>${esc(t)}</li>`).join('')}</ul><label class="row" style="gap:6px"><input type="checkbox" data-apply checked> 同时关闭现有未处理的同类线索</label><div class="row"><button class="btn sm pri" data-intake-on>启用</button><button class="btn sm" data-intake-off>不再建议</button></div><p role="status" data-intake-msg></p></div>`).join('') || '<p class="muted">暂无建议：同一类拒绝累计 3 条以上、且标题有共同词时才会出现。</p>'}
+    <h4>启用中 · ${active.length} 条</h4>${active.map(r => `<p data-intake-rule="${esc(r.id)}">「${esc(r.pattern)}」 · ${esc(REASON_LABEL[r.category] || r.category)} · ${scope(r)} · 已拦截 ${r.hits} 条 <button class="btn sm" data-intake-retire>停用</button></p>`).join('') || '<p class="muted">还没有启用的规则。</p>'}
+    <details><summary>手动添加规则</summary><form data-intake-add class="row" style="gap:6px;flex-wrap:wrap"><input name="pattern" required minlength="2" placeholder="标题关键词或正则，如 购物券|外卖券"><select name="category">${catOpts('non_ai')}</select><input name="scopeValue" placeholder="仅限来源（可空，如 linuxdo）"><label class="row" style="gap:4px"><input type="checkbox" name="applyToOpen" checked> 关闭现有同类</label><button class="btn sm pri">添加</button><p role="status" data-intake-msg></p></form></details>`;
+  const create = async (payload, msg) => {
+    try {
+      const r = await adm('/screening/rules', payload); let closed = r.closed || 0;
+      for (let more = r.more, i = 0; more && i < 30; i++) { msg.textContent = `已启用，正在关闭现有同类线索（${closed} 条）…`; const next = await adm(`/screening/rules/${encodeURIComponent(r.rule.id)}/apply`, {}); closed += next.closed; more = next.more && next.closed > 0; }
+      msg.textContent = payload.status === 'declined' ? '已不再建议' : `已启用${closed ? `，并关闭 ${closed} 条现有线索` : ''}`; return true;
+    }
+    catch (e) { msg.textContent = e.message + (e.body?.conflicts?.length ? '：' + e.body.conflicts.join('；') : ''); return false; }
+  };
+  body.querySelectorAll('[data-intake-sug]').forEach(card => {
+    const g = data.suggestions[Number(card.dataset.intakeSug)], msg = card.querySelector('[data-intake-msg]');
+    const base = { pattern: g.pattern, category: g.category, scopeKind: g.scopeKind, scopeValue: g.scopeValue, exampleRefs: g.exampleRefs };
+    card.querySelector('[data-intake-on]').addEventListener('click', async e => { e.target.disabled = true; if (!await create({ ...base, applyToOpen: card.querySelector('[data-apply]').checked }, msg)) e.target.disabled = false; });
+    card.querySelector('[data-intake-off]').addEventListener('click', async e => { e.target.disabled = true; await create({ ...base, status: 'declined' }, msg); });
+  });
+  body.querySelectorAll('[data-intake-retire]').forEach(button => button.addEventListener('click', async () => {
+    button.disabled = true; try { await adm('/screening/rules/' + encodeURIComponent(button.closest('[data-intake-rule]').dataset.intakeRule) + '/retire', { reason: '管理员停用' }); button.textContent = '已停用'; } catch (e) { button.disabled = false; toast(e.message); }
+  }));
+  const form = body.querySelector('[data-intake-add]');
+  form.addEventListener('submit', async e => {
+    e.preventDefault(); const fd = Object.fromEntries(new FormData(form));
+    await create({ pattern: fd.pattern.trim(), category: fd.category, ...(fd.scopeValue.trim() ? { scopeKind: 'origin', scopeValue: fd.scopeValue.trim() } : {}), applyToOpen: !!fd.applyToOpen }, form.querySelector('[data-intake-msg]'));
+  });
+}
 function fastTrackFormHtml(p = {}) {
   return `<form data-fast-track class="card" style="display:flex;flex-direction:column;gap:10px;max-width:640px${p.inline ? ';margin-top:8px' : ''}">
     <p class="sub" style="margin:0"><b>⚡ 快速上架</b>：你确认是官方发布或亲测可领的权益，跳过筛查和审核直接上架。链接会登记为该厂商的官方地址；其余字段由免费模型从链接读取，读不出的再请你补。不发即时推送，次日飞书日报带上。</p>
     <label class="field">厂商<select name="platformId"><option value="">＋ 新厂商（在下面填写）</option>${adminPlatformOptions(p.platformId)}</select></label>
-    <div class="row" data-ft-new style="gap:8px;flex-wrap:wrap"><input name="newName" placeholder="新厂商名称"><input name="newId" placeholder="厂商 ID（中文名必填，如 odyssey）" pattern="[a-z0-9][a-z0-9\-]{1,60}"><select name="newType">${Object.entries(PTYPE).map(([k, v]) => `<option value="${k}" ${k === 'new' ? 'selected' : ''}>${v.l}</option>`).join('')}</select></div>
+    <div class="row" data-ft-new style="gap:8px;flex-wrap:wrap"><input name="newName" placeholder="新厂商名称"><select name="newType">${Object.entries(PTYPE).map(([k, v]) => `<option value="${k}" ${k === 'new' ? 'selected' : ''}>${v.l}</option>`).join('')}</select></div>
     <label class="field">官方链接<input type="url" name="url" required placeholder="https://（官网、公众号文章、厂商 X 推文）" value="${esc(p.url || '')}"></label>
     <label class="field">主要权益<input name="benefit" required minlength="2" maxlength="500" placeholder="比如：Odyssey-3 公开研究预览，可免费试用" value="${esc(p.benefit || '')}"></label>
     <label class="field">依据<select name="basis"><option value="official">官方发布</option><option value="tested">我亲测可领</option></select></label>
-    <details><summary class="small">可选：标题、日期、备注</summary><label class="field">标题<input name="title" maxlength="120"></label><div class="row" style="gap:8px"><label class="field">开始<input type="date" name="claimStart"></label><label class="field">截止<input type="date" name="claimEnd"></label></div><label class="field">备注（给模型的提示）<input name="note" maxlength="1000"></label></details>
+    <details><summary class="small">可选：标题、日期、备注</summary><label class="field">标题<input name="title" maxlength="120" value="${esc(p.title || '')}"></label><div class="row" style="gap:8px"><label class="field">开始<input type="date" name="claimStart"></label><label class="field">截止<input type="date" name="claimEnd"></label></div><label class="field">备注（给模型的提示）<input name="note" maxlength="1000" value="${esc(p.note || '')}"></label></details>
     <button class="btn pri" type="submit">⚡ 快速上架</button><p class="small" role="status" data-ft-msg></p></form>`;
 }
-function bindFastTrackForm(form, leadId, onDone) {
+function bindFastTrackForm(form, leadId, onDone, link = {}) {
   const select = form.querySelector('[name="platformId"]'), extra = form.querySelector('[data-ft-new]'), msg = form.querySelector('[data-ft-msg]');
   const sync = () => { extra.hidden = !!select.value; };
   select.addEventListener('change', sync); sync();
@@ -2283,8 +2397,8 @@ function bindFastTrackForm(form, leadId, onDone) {
     e.preventDefault();
     const fd = Object.fromEntries(new FormData(form)), button = form.querySelector('button[type="submit"]');
     if (!fd.platformId && !fd.newName.trim()) { msg.textContent = '请选择厂商，或填写新厂商名称'; return; }
-    const body = { url: fd.url, benefit: fd.benefit.trim(), basis: fd.basis, ...(fd.platformId ? { platformId: fd.platformId } : { newPlatform: { name: fd.newName.trim(), ...(fd.newId.trim() ? { id: fd.newId.trim() } : {}), type: fd.newType } }),
-      ...Object.fromEntries(['title', 'claimStart', 'claimEnd', 'note'].filter(k => fd[k]?.trim()).map(k => [k, fd[k].trim()])), ...(leadId ? { leadId } : {}) };
+    const body = { url: fd.url, benefit: fd.benefit.trim(), basis: fd.basis, ...(fd.platformId ? { platformId: fd.platformId } : { newPlatform: { name: fd.newName.trim(), type: fd.newType } }),
+      ...Object.fromEntries(['title', 'claimStart', 'claimEnd', 'note'].filter(k => fd[k]?.trim()).map(k => [k, fd[k].trim()])), ...(leadId ? { leadId } : {}), ...link };
     button.disabled = true;
     try {
       const r = await adm('/fast-track', body);

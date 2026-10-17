@@ -12,6 +12,13 @@ describe('羊毛关键词', () => {
   it('社区线索里的同类说法能被识别', () => {
     for (const s of ['即梦每日登录送66积分', '硅基流动实名认证送16元代金券', 'Dreamina 90% off first month', '邀请好友双方各得250积分']) expect(isLead(s), s).toBe(true);
   });
+  // 2026-10-15 漏抓：故障补偿和只写“重置”的员工公告
+  it('故障补偿、消耗返还和全局重置能被识别', () => {
+    for (const s of ['DeepSeek 服务故障近 5 小时，官方补偿所有 API 用户 7 天内消耗金额', 'DeepSeek 就 10 月 15 日 API 故障致歉并全额补偿 7 日消耗金额',
+      'DeepSeek 要发钱了，过去七天内的花费都会返还', 'DeepSeek API outage: full refund of 7 days of spend as credits', 'Vendor will compensate affected users with API credits',
+      'The reports of my reset button being lost are greatly exaggerated\n\nDay 10/ Reset', 'OpenAI 重置按钮回归', 'Codex 全局重置已完成', 'Global reset landing by EOD PST time']) expect(isLead(s), s).toBe(true);
+    for (const s of ['京东 7999 元苹果 iPhone Duo 早鸟权益包下架，部分消费者投诉无法退款', 'Grok Bot 订票出错 SpaceX 全额赔付', '性能最高提升 35%：非官方英伟达 DLSS 预设 C 登场']) expect(isLead(s), s).toBe(false);
+  });
 });
 
 import { parseModelJson } from '../pipeline/llm';
@@ -59,5 +66,45 @@ describe('平台抽取要点', () => {
     const ids = new Set((JSON.parse(readFileSync(new URL('../seed/platforms.json', import.meta.url), 'utf8')) as { platforms: { id: string }[] }).platforms.map(p => p.id));
     expect([...notes.keys()].filter(id => !ids.has(id))).toEqual([]);
     expect(notes.size).toBeGreaterThan(20);
+  });
+});
+
+import { isAiFreebieTopic } from '../pipeline/lib';
+// 2026-10-15：LINUX DO 福利版块整版收录，七成是非 AI 福利，中转站推广还被误关联到 Google 条目。
+describe('综合福利版块的 AI 主题筛选', () => {
+  it('保留 AI 产品与模型福利', () => {
+    for (const t of ['DeepSeek 要发钱了，过去七天内的花费都会返还', 'U2 flash 官网免费用，免费到10.30号', 'qoder领18元奶茶免单卡', 'claude重置卡别忘了用',
+      '国际版workbuddy的deepseek免费时间又延长了（到10月31号）', 'gmi cloud 免费一周qwen 3.8max ,flash ,wan 3.0', 'Gemini Plus免费一年订阅 国内学生也可以领', '领 ZCode 3 亿臭鸡蛋啦！', 'Step滞销，帮帮我们', '【已无】SenseAudio速蹬，16号到期']) expect(isAiFreebieTopic(t), t).toBe(true);
+  });
+  it('排除非 AI 福利和中转站、号池推广', () => {
+    for (const t of ['霸王茶姬后续，再赠送买一送一', '（已领完）美团单车7天66次卡，需要的速领吧', '20261015移动领1-9元话费', '[已蹬完]🪜订阅快到期了，留给有缘人',
+      '【富可敌国｜NodeAI API 中转站】给佬友送 $10 体验额度｜GPT、Claude、国模，一把 Key 接入', '国模福利(kimi-k3 glm-5.3 glm-5.3-flashx)hub站免费调用，随时拉闸',
+      '【富可敌国】海外企业团队支持｜GPT Plus 0.1x、Kiro 0.125x', '想转让一个gpt pro25x的号']) expect(isAiFreebieTopic(t), t).toBe(false);
+  });
+});
+
+import { approvedTermsStillPresent } from '../pipeline/lib';
+// 2026-10-15：已批准价格页每轮被免费模型改写措辞重新提交，生成人工身份任务。
+describe('已批准条款原文仍在页面上', () => {
+  const excerpts = { benefit: 'Free plan includes 10,000 credits per month.', eligibility: 'Available to all new accounts.' };
+  it('全部摘录逐字仍在（忽略空白和大小写）时视为未变化', () => {
+    expect(approvedTermsStillPresent(excerpts, 'Pricing\nFREE plan includes 10,000   credits per month.\nAvailable to all new accounts.\nFAQ')).toBe(true);
+  });
+  it('任一摘录消失、数值变化或只有过短摘录时照常提交', () => {
+    expect(approvedTermsStillPresent(excerpts, 'Free plan includes 5,000 credits per month. Available to all new accounts.')).toBe(false);
+    expect(approvedTermsStillPresent(excerpts, 'Free plan includes 10,000 credits per month.')).toBe(false);
+    expect(approvedTermsStillPresent({ benefit: 'Free' }, 'Free')).toBe(false);
+    expect(approvedTermsStillPresent(null, 'anything')).toBe(false);
+  });
+});
+
+import { newRelevantLines } from '../pipeline/lib';
+// 2026-10-15：已收录的官方页面每 6 小时因删句、换序或空白变化被判“有变化”，整页重新交给模型抽取。
+describe('官方页面的新增句子', () => {
+  it('只有删减、换序或空白变化时没有新增', () => {
+    expect(newRelevantLines('免费 100 积分\n每日登录送 10 积分\n限时活动', '每日登录送  10 积分\n免费 100 积分')).toEqual([]);
+  });
+  it('出现新句子或数值变化时返回新增的句子', () => {
+    expect(newRelevantLines('免费 100 积分', '免费 200 积分\n新用户送 5 美元')).toEqual(['免费 200 积分', '新用户送 5 美元']);
   });
 });

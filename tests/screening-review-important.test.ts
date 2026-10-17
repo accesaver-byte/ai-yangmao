@@ -40,7 +40,7 @@ describe('screening review corrections', () => {
     f.sqlite.prepare(`INSERT INTO screening_rules(id, kind, scope_kind, scope_value, category, description, pattern, status, created_at) VALUES ('r-non-ai', 'title_pattern', 'global', NULL, 'non_ai', '不是 AI 额度', '打车券', 'active', '2026-10-12T00:00:00.000Z')`).run();
     const response = await ingest(f, [{ origin: 'linuxdo', url: 'https://linux.do/t/taxi/1', title: '打车券免费领' }], { SCREENING_MODE: 'auto' });
     expect(response.status).toBe(200);
-    expect(f.sqlite.prepare(`SELECT reason_code FROM review_decisions`).get()).toEqual({ reason_code: 'not_ai' });
+    expect(JSON.parse((f.sqlite.prepare(`SELECT resolution FROM leads WHERE url='https://linux.do/t/taxi/1'`).get() as any).resolution)).toMatchObject({ status: 'closed', reasonCode: 'not_ai', ruleId: 'r-non-ai' });
   });
 
   it('keeps a verdict when the urgency quote is missing and does not ask the model again', async () => {

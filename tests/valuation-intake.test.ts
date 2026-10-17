@@ -1,4 +1,4 @@
-import {afterEach,beforeEach,expect,it} from 'vitest';
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {auditFixture,auditTerms} from './fixtures/identity/audit';
 import {displayOffer} from './fixtures/identity/offer';
 import {sha256} from '../src/shared/identity/normalize';
@@ -9,7 +9,8 @@ import type {Source} from '../pipeline/collectors';
 import type {Extracted} from '../pipeline/llm';
 import type {FetchedPage} from '../pipeline/lib';
 let f:ReturnType<typeof auditFixture>;
-beforeEach(()=>f=auditFixture());afterEach(()=>f.sqlite.close());
+// 价格目录（如 ECB 汇率，7 天有效）按当前时间判断新鲜度；固定在样例日期，避免测试随日历过期（2026-10-16 起失败）。
+beforeEach(()=>{vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-12T00:00:00Z'));f=auditFixture();});afterEach(()=>{f.sqlite.close();vi.useRealTimers();});
 const date='2026-10-11T20:00:00Z',url='https://vendor.example/rewards';
 const sources=(excerpt:string)=>[{id:'benefit',url,checkedAt:date,excerpt,priceBasis:'本次原文赠金'}];
 async function draft(text='Campaign signup-2026 grants 10 USD.') {

@@ -11,7 +11,7 @@ import {MutationBuilder,commitIdentityMutation,readIdentityReceipt} from './comm
 type Task={id:string;kind:string;state:string;revision:number;suggestion_json:string|null;lease_until:string|null};
 type Source={id:string;revision:number;raw_candidate_json:string;facts_json:string;observation_id:string;trust_json:string;text_truncated:number;final_url?:string};
 type Entry={entityId:string;revision:number;offerId:string|null;title:string;valueText:string;reviewState:string|null;sourceUrl:string|null;sameSource:boolean};
-type Preparation={kind:'identity_preparation_v1';status:'scanning'|'ready'|'needs_source'|'history_unusable';productId:string|null;cursor:string|null;scanned:number;entries:Entry[];sourceObservationId:string|null;sourceOriginalObservationId?:string|null;sourceCandidateId?:string|null;sourceReverifications?:Array<{candidateId:string;originalObservationId:string;replacementObservationId:string;fetchId:string}>;sourceUrl:string|null;reason:string;nextAttemptAt:string|null;previousModelSuggestion?:unknown;modelResult?:unknown;manualHint?:{kind:'suspected_duplicate'|'previously_rejected';reason:string;actor:string;at:string}};
+type Preparation={kind:'identity_preparation_v1';status:'scanning'|'ready'|'needs_source'|'history_unusable'|'source_unverifiable';productId:string|null;cursor:string|null;scanned:number;entries:Entry[];sourceObservationId:string|null;sourceOriginalObservationId?:string|null;sourceCandidateId?:string|null;sourceReverifications?:Array<{candidateId:string;originalObservationId:string;replacementObservationId:string;fetchId:string}>;sourceUrl:string|null;reason:string;nextAttemptAt:string|null;previousModelSuggestion?:unknown;modelResult?:unknown;manualHint?:{kind:'suspected_duplicate'|'previously_rejected';reason:string;actor:string;at:string}};
 const empty=(status:Preparation['status'],reason:string,productId:string|null=null):Preparation=>({kind:'identity_preparation_v1',status,productId,cursor:null,scanned:0,entries:[],sourceObservationId:null,sourceUrl:null,reason,nextAttemptAt:null});
 function readPreparation(value:string|null):Preparation|null{if(!value)return null;const raw=JSON.parse(value);return raw.kind==='identity_preparation_v1'?raw as Preparation:null;}
 const sourceIsVerified=(source:{trust_json:string;text_truncated:number})=>{const trust=JSON.parse(source.trust_json);return trust.sourceVerified===true&&!source.text_truncated&&typeof trust.productId==='string';};
@@ -42,6 +42,13 @@ export async function preparationQueue(db:D1Database,products:string[]){
  const tasks=oldest&&!top.slice(0,3).some(task=>task.id===oldest.id)?[...top.slice(0,3),oldest]:top;
  return {tasks};
 }
+/** Whether the system may fetch this source to verify it: an official address of an approved vendor. */
+async function officialFetchable(db:D1Database,finalUrl:string,rawCandidate:string){
+ const offer=offerIn.safeParse(JSON.parse(rawCandidate).candidate);const productId=offer.success?offer.data.platformId:null;
+ const platform=productId?await db.prepare('SELECT id,name,site,x_handles,staff_handles,status FROM platforms WHERE id=?').bind(productId).first<{id:string;name:string;site:string|null;x_handles:string;staff_handles:string;status:string}>():null;
+ const sources=platform?(await db.prepare('SELECT url,tier FROM sources WHERE platform_id=? ORDER BY id LIMIT 21').bind(platform.id).all<{url:string;tier:string}>()).results:[];
+ return {productId,allowed:!!platform&&platform.status==='approved'&&sources.length<=20&&!!officialTier(finalUrl,{id:platform.id,name:platform.name,site:platform.site,xHandles:JSON.parse(platform.x_handles),staffHandles:JSON.parse(platform.staff_handles)},sources)};
+}
 export async function preparationSource(db:D1Database,taskId:string){
  const task=await db.prepare("SELECT id FROM review_tasks WHERE id=? AND kind IN ('identity','merge_conflict') AND state IN ('open','manual','checking')").bind(taskId).first();if(!task)throw new IdentityError(404,'identity task missing');
  const rows=(await db.prepare(taskSourcesCte+" SELECT c.raw_candidate_json,o.final_url,coalesce(f.provenance_json,o.trust_json) trust_json,coalesce(json_extract(f.provenance_json,'$.truncated'),o.text_truncated) text_truncated FROM task_candidates tc JOIN intake_candidates c ON c.id=tc.candidate_id JOIN source_observations o ON o.id=c.observation_id LEFT JOIN source_observation_fetches f ON f.id=c.source_fetch_id AND f.observation_id=o.id WHERE tc.task_id IN (SELECT id FROM task_sources) ORDER BY c.id LIMIT 11").bind(taskId).all<{raw_candidate_json:string;final_url:string;trust_json:string;text_truncated:number}>()).results;
@@ -62,14 +69,14 @@ export async function scanIdentityTask(db:D1Database,taskId:string,raw:unknown){
  const sources=(await db.prepare(taskSourcesCte+" SELECT c.id,c.revision,c.raw_candidate_json,c.facts_json,c.observation_id,o.final_url,coalesce(f.provenance_json,o.trust_json) trust_json,coalesce(json_extract(f.provenance_json,'$.truncated'),o.text_truncated) text_truncated FROM task_candidates tc JOIN intake_candidates c ON c.id=tc.candidate_id JOIN source_observations o ON o.id=c.observation_id LEFT JOIN source_observation_fetches f ON f.id=c.source_fetch_id AND f.observation_id=o.id WHERE tc.task_id IN (SELECT id FROM task_sources) ORDER BY c.id LIMIT 11").bind(taskId).all<Source>()).results;
  if(!sources.length||sources.length>10)throw new IdentityError(409,'identity task needs a bounded candidate set');
  const retryAt=()=>new Date(Date.now()+evidenceRetryDelay(sources.map(source=>source.raw_candidate_json),sources.map(source=>source.facts_json))).toISOString();
- let freshObservationId:string|null=null,freshFetchId:string|null=null;
+ let freshObservationId:string|null=null,freshFetchId:string|null=null,unverifiable:string|null=null;
  const sourceToRefresh=sources.find(source=>!sourceIsVerified(source))??sources[0];
  if(input.freshSource){const source=sourceToRefresh,candidate=JSON.parse(source.raw_candidate_json),offer=offerIn.safeParse(candidate.candidate);if(!offer.success)throw new IdentityError(400,'source candidate has no valid offer fields');
-  const proof=input.freshSource.sourceFetch,text=input.freshSource.sourceText;const quotes=(candidate.quotes??[]).map((q:{quote:string})=>q.quote).filter(Boolean);const normalized=(v:string)=>v.normalize('NFKC').replace(/\s+/g,' ').trim();if(!quotes.some((q:string)=>normalized(text).includes(normalized(q)))||proof.sourceVerified!==true||proof.truncated||proof.method==='jina'||proof.originalUrl!==source.final_url)throw new IdentityError(400,'new official page does not verify the original benefit');
-  const trust=JSON.parse(source.trust_json);const observed=await new IdentityStore(db).recordObservation({requestId:'prepare-ob:'+input.requestId,originalUrl:proof.originalUrl,finalUrl:proof.finalUrl,text,fetchKind:'direct',sourceId:trust.sourceId??offer.data.sourceId,issuerProductId:offer.data.platformId,observedAt:new Date().toISOString(),fetchEvidence:proof});
+  const proof=input.freshSource.sourceFetch,text=input.freshSource.sourceText;const quotes=(candidate.quotes??[]).map((q:{quote:string})=>q.quote).filter(Boolean);const normalized=(v:string)=>v.normalize('NFKC').replace(/\s+/g,' ').trim();if(!quotes.some((q:string)=>normalized(text).includes(normalized(q)))||proof.sourceVerified!==true||proof.truncated||proof.method==='jina'||proof.originalUrl!==source.final_url)unverifiable=proof.method==='jina'?'官方页面只能经第三方渲染读取，不能作为核验来源':'重新读取的官方页面上找不到候选摘录的原文';
+  if(!unverifiable){const trust=JSON.parse(source.trust_json);const observed=await new IdentityStore(db).recordObservation({requestId:'prepare-ob:'+input.requestId,originalUrl:proof.originalUrl,finalUrl:proof.finalUrl,text,fetchKind:'direct',sourceId:trust.sourceId??offer.data.sourceId,issuerProductId:offer.data.platformId,observedAt:new Date().toISOString(),fetchEvidence:proof});
   const verified=await db.prepare('SELECT o.trust_json,o.text_truncated,f.provenance_json FROM source_observations o JOIN source_observation_fetches f ON f.observation_id=o.id AND f.id=? WHERE o.id=?').bind(observed.fetchId??'',observed.observationId).first<{trust_json:string;text_truncated:number;provenance_json:string}>();
-  const official=verified?JSON.parse(verified.trust_json):null;if(!verified||verified.text_truncated||official?.sourceVerified!==true||official.productId!==offer.data.platformId||JSON.parse(verified.provenance_json).sourceVerified!==true)throw new IdentityError(400,'replacement page lacks verified official provenance');
-  freshObservationId=observed.observationId;freshFetchId=observed.fetchId??null;
+  const official=verified?JSON.parse(verified.trust_json):null;if(!verified||verified.text_truncated||official?.sourceVerified!==true||official.productId!==offer.data.platformId||JSON.parse(verified.provenance_json).sourceVerified!==true)unverifiable='重新读取的页面不是该发放产品已登记的官方来源';
+  else{freshObservationId=observed.observationId;freshFetchId=observed.fetchId??null;}}
  }
  const trusted=[...new Set(sources.filter(s=>!s.text_truncated).map(s=>JSON.parse(s.trust_json)).filter(v=>v.sourceVerified===true&&typeof v.productId==='string').map(v=>String(v.productId)))];
  const prior=readPreparation(task.suggestion_json);
@@ -99,6 +106,24 @@ export async function scanIdentityTask(db:D1Database,taskId:string,raw:unknown){
    const reason=status==='ready'?(scanned>200?'同平台历史活动较多，请逐页核对完整列表，再作身份判断。':unique.some(e=>e.sameSource)?'同一官方页面已有历史活动，建议优先核对是否为同一次发放；同页不等于同权益。':unique.length?'已读取同发放产品的历史活动。建议核对领取机制与活动轮次，再选择对应条目。':'未找到同发放产品的活动；仍需核对旧拒绝决定及原文后才能建立新待审活动。'):status==='scanning'?'历史查重仍在继续；当前不能作同一或独立的决定。':'历史身份缺少可展示的活动内容，暂不能交给人工判断。';
    next={kind:'identity_preparation_v1',status,productId:product,cursor:status==='scanning'?page.nextCursor:null,scanned,entries:unique.slice(0,200),sourceObservationId:preparedObservationId??sources[0].observation_id,sourceOriginalObservationId:freshObservationId?sourceToRefresh.observation_id:prior?.sourceOriginalObservationId??null,sourceCandidateId:freshObservationId?sourceToRefresh.id:prior?.sourceCandidateId??null,sourceUrl:input.freshSource?.sourceFetch.finalUrl??prior?.sourceUrl??sources[0].final_url??null,reason,nextAttemptAt:null};
   }
+  }
+ }
+  // A source that is not a registered official address is never fetched for verification, so it could never leave
+  // needs_source either; the owner decides those too.
+ if(next.status==='needs_source'&&!unverifiable&&!freshObservationId&&prior?.status!=='source_unverifiable'&&!sourceIsVerified(sourceToRefresh)&&!(await officialFetchable(db,sourceToRefresh.final_url??'',sourceToRefresh.raw_candidate_json)).allowed)unverifiable='来源不是该厂商已登记的官方地址，系统不能据此核实';
+  // 2026-10-16: a source the system cannot re-verify used to throw and leave the card locked in needs_source for days
+  // (the owner's buttons stay hidden until "ready"). Hand it to the owner instead, and re-check every few days.
+ if(next.status==='needs_source'&&(unverifiable||(prior?.status==='source_unverifiable'&&!freshObservationId))){
+  const why=unverifiable??prior?.reason??'官方页面无法核实这段原文';
+  next=empty('source_unverifiable',(unverifiable?`系统无法自动核实：${why}。`:why.startsWith('系统无法')?why:`系统无法自动核实：${why}。`)+'请点开来源核对：属实用 ⚡ 快速上架或建立待审活动，重复或不收就拒绝。',prior?.productId??null);
+  next.sourceUrl=sourceToRefresh.final_url??null;next.nextAttemptAt=new Date(Date.now()+3*86400_000).toISOString();
+  // Most of these are repeats of listed perks: give the owner the vendor's activities to pick "same as" from.
+  const declared=offerIn.safeParse(JSON.parse(sourceToRefresh.raw_candidate_json).candidate);
+  if(declared.success){
+   const rows=(await db.prepare("SELECT e.id,e.business_revision,e.canonical_offer_id,o.title,o.value_text,o.review_state,json_extract(o.evidence,'$.url') source_url FROM benefit_entities e JOIN offers o ON o.id=e.canonical_offer_id WHERE e.platform_id=? AND e.state='active' ORDER BY o.updated_at DESC LIMIT 200").bind(declared.data.platformId).all<{id:string;business_revision:number;canonical_offer_id:string|null;title:string|null;value_text:string|null;review_state:string|null;source_url:string|null}>()).results;
+   const url=normalizeDocumentUrl(declared.data.evidence.url);
+   next.productId=declared.data.platformId;next.scanned=rows.length;
+   next.entries=rows.map(r=>({entityId:r.id,revision:r.business_revision,offerId:r.canonical_offer_id,title:r.title??'历史条目资料不全',valueText:r.value_text??'',reviewState:r.review_state,sourceUrl:r.source_url,sameSource:!!r.source_url&&normalizeDocumentUrl(r.source_url)===url})).sort((a,b)=>Number(b.sameSource)-Number(a.sameSource));
   }
  }
  const originalSuggestion=task.suggestion_json?JSON.parse(task.suggestion_json):null;

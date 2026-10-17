@@ -1,3 +1,4 @@
+import { sourceUnhealthy } from '../shared/source-health';
 import {readCollectionStatus} from './collection-status';
 import { commentRoutes } from './comments';
 import {publicationError} from './publication';
@@ -33,6 +34,7 @@ import * as s from '../db/schema';
 import { isoDate, leadIn, offerIn, collectedOfferIn, runIn } from '../shared/ingest';
 import { differentOccurrence, findDuplicate, crossPlatformDuplicate, sameRecurringCreditPlan, sameModelAnnouncement, sameEvidenceBenefit } from '../shared/dedupe';
 import { gateVerdict, matchTitleRule, urlKey } from '../shared/screening/gate0';
+import { activeTitleRules, ruleResolution } from './screening/intake-rules';
 import { SCREENING_PROMPT_VERSION } from '../shared/screening/version';
 import { reasonCodeForCategory, screeningMode } from '../shared/screening/types';
 import type { ScreeningRule } from '../shared/screening/types';
@@ -149,17 +151,17 @@ app.get('/api/meta', async c => c.json(await readCollectionStatus(c.env.DB)));
 /** 覆盖范围页：监控了哪些渠道、健康状况。不含任何密钥或内部地址以外的信息。 */
 app.get('/api/coverage', async c => {
   const d = db(c.env);
-  const srcs = await d.select({ kind: s.sources.kind, enabled: s.sources.enabled, failStreak: s.sources.failStreak, lastOkAt: s.sources.lastOkAt, platformId: s.sources.platformId, url: s.sources.url, config: s.sources.config }).from(s.sources);
+  const srcs = await d.select({ kind: s.sources.kind, enabled: s.sources.enabled, failStreak: s.sources.failStreak, lastOkAt: s.sources.lastOkAt, createdAt: s.sources.createdAt, platformId: s.sources.platformId, url: s.sources.url, config: s.sources.config }).from(s.sources);
   const [{ n: platforms }] = await d.select({ n: sql<number>`count(*)` }).from(s.platforms).where(eq(s.platforms.status, 'approved'));
   const collection = await readCollectionStatus(c.env.DB);
   const byKind: Record<string, { total: number; enabled: number; failing: number }> = {};
-  const unhealthy = (x: typeof srcs[number]) => x.failStreak >= 3 || !x.lastOkAt || Date.now() - Date.parse(x.lastOkAt) > 12 * 3600_000;
+  const unhealthy = (x: typeof srcs[number]) => sourceUnhealthy(x);
   for (const x of srcs) {
     const k = (byKind[x.kind] ??= { total: 0, enabled: 0, failing: 0 });
     k.total++; if (x.enabled) k.enabled++; if (x.enabled && unhealthy(x)) k.failing++;
   }
   return c.json({ platforms, sources: srcs.filter(x => x.enabled).length, byKind, ...collection,
-    officialPages: srcs.filter(x => x.enabled && x.platformId).map(x => ({ platformId: x.platformId, url: x.url, kind: x.kind, healthy: !unhealthy(x) })) });
+    officialPages: srcs.filter(x => x.enabled && x.platformId).map(x => ({ platformId: x.platformId, url: x.url, kind: x.kind, healthy: !!x.lastOkAt && !unhealthy(x) })) }); // 未成功采集过的信源不算“健康”，但新登记 12 小时内也不算失效
 });
 
 const listQuery = z.object({
@@ -251,38 +253,41 @@ ingest.post('/leads', async c => {
     if (seenUrl.has(row.url) || seenKey.has(row.urlKey)) { duplicates.push(row); return false; }
     seenUrl.add(row.url); seenKey.add(row.urlKey); return true;
   });
-  // D1 单条语句最多 100 个绑定参数：每行绑定 origin、url、title、raw、status、url_key 共 6 个，一批最多 16 行。
+  // Owner-approved intake rules (2026-10-16) close a lead on arrival in every mode except off. They depend only on title and
+  // origin, so a matching lead is written already closed: no extra query per lead, which a whole linux.do chunk can need.
+  const rules = mode !== 'off' && fresh.length ? await activeTitleRules(c.env.DB) : [];
+  const matchedRule = new Map<string, ScreeningRule>();
+  const rows = fresh.map(row => {
+    const rule = matchTitleRule({ title: row.title ?? '', origin: row.origin, platformId: null, sourceId: null }, rules);
+    if (!rule) return { ...row, resolution: null };
+    matchedRule.set(row.url, rule);
+    return { ...row, status: 'rejected' as const, resolution: ruleResolution(rule, row.url) };
+  });
+  // D1 单条语句最多 100 个绑定参数：每行绑定 origin、url、title、raw、status、url_key、resolution 共 7 个，一批最多 14 行。
   // （2026-10-13 加 url_key 后仍按 20 行一批，超过 16 条新线索的整批写入全部失败，linux.do 连续失败。）
-  let created = 0;
+  let created = 0, filtered = 0;
   const createdRows: { id: number; url: string }[] = [];
-  const perBatch = Math.floor(100 / 6);
-  for (let i = 0; i < fresh.length; i += perBatch) {
-    const res = await db(c.env).insert(s.leads).values(fresh.slice(i, i + perBatch)).onConflictDoNothing().returning({ id: s.leads.id, url: s.leads.url });
+  const perBatch = Math.floor(100 / 7);
+  for (let i = 0; i < rows.length; i += perBatch) {
+    const res = await db(c.env).insert(s.leads).values(rows.slice(i, i + perBatch)).onConflictDoNothing().returning({ id: s.leads.id, url: s.leads.url });
     created += res.length;
     createdRows.push(...res);
   }
   if (mode !== 'off' && createdRows.length) {
     const store = new ScreeningStore(c.env.DB);
-    const ruleRows = await c.env.DB.prepare(`SELECT id, kind, scope_kind, scope_value, category, description, pattern, status FROM screening_rules WHERE status='active' AND kind='title_pattern'`).all<{ id: string; kind: 'title_pattern'; scope_kind: ScreeningRule['scopeKind']; scope_value: string | null; category: ScreeningRule['category']; description: string; pattern: string | null; status: ScreeningRule['status'] }>();
-    const rules: ScreeningRule[] = ruleRows.results.map(row => ({ id: row.id, kind: row.kind, scopeKind: row.scope_kind, scopeValue: row.scope_value, category: row.category, description: row.description, pattern: row.pattern, status: row.status }));
-    const now = new Date();
+    const now = new Date(), hits = new Map<string, number>();
     for (const row of createdRows) {
       const input = fresh.find(item => item.url === row.url)!;
       const urgency = classifyUrgency({ title: input.title ?? '', text: input.raw ?? '' }, now);
       await store.upsertItem({ subjectKind: 'lead', subjectId: String(row.id), origin: input.origin, state: 'awaiting_screen', tier: urgency.tier, deadline: urgency.deadline, signals: urgency.signals, urgencyQuote: urgency.quote, tierBy: 'gate0', discoveredAt: now.toISOString(), dueAt: systemDueAt(urgency.tier, now.toISOString()) });
-      const rule = matchTitleRule({ title: input.title ?? '', origin: input.origin, platformId: null, sourceId: null }, rules);
+      const rule = matchedRule.get(row.url);
       if (!rule) continue;
       const subject = { kind: 'lead' as const, url: input.url, origin: input.origin, platformId: null, title: input.title ?? '', openingText: input.raw ?? '' };
       const verdict = gateVerdict({ rule }, subject, { generatedAt: now.toISOString(), records: [], rules, profiles: [], calibrations: [] });
       const decision = await store.recordDecision({ requestId: `gate0:${row.id}:${rule.id}`, itemId: `lead:${row.id}`, verdict: verdict.verdict, matchRef: verdict.matchId, ruleId: verdict.ruleId, reasonCategory: verdict.reasonCategory, occurrenceCheck: verdict.occurrenceCheck, confidence: verdict.confidence, evidenceQuote: verdict.evidenceQuote, explanation: verdict.explanation, urgency: verdict.urgency, model: 'gate0', calibrated: false, promptVersion: SCREENING_PROMPT_VERSION, contextHash: 'gate0', mode: mode === 'auto' ? 'auto' : mode === 'suggest' ? 'suggest' : 'shadow' });
-      if (mode === 'auto') {
-        const lead = await c.env.DB.prepare('SELECT id, url, status, raw, title, resolution, offer_id FROM leads WHERE id=?').bind(row.id).first<{ id: number; url: string; status: string; raw: string | null; title: string | null; resolution: string | null; offer_id: string | null }>();
-        if (lead) {
-          await closeIdentityLead(c.env.DB, { ...lead, offerId: lead.offer_id, resolution: lead.resolution ? JSON.parse(lead.resolution) : null }, { status: 'closed', jobId: `gate0-${row.id}`, attempts: 0, inconclusive: 0, checkedAt: now.toISOString(), nextAttemptAt: null, reason: verdict.explanation, queries: [], candidates: [], offerIds: [] }, input.raw ?? input.title ?? '', { actor: 'pipeline:gate0', reasonCode: reasonCodeForCategory(rule.category) });
-          await store.markApplied(decision.id, 'closed');
-        }
-      }
+      await store.markApplied(decision.id, 'closed'); filtered++; hits.set(rule.id, (hits.get(rule.id) ?? 0) + 1);
     }
+    for (const [ruleId, n] of hits) await c.env.DB.prepare('UPDATE screening_rules SET hits=hits+? WHERE id=?').bind(n, ruleId).run();
   }
   for (const row of duplicates) {
     const existing = await c.env.DB.prepare(`SELECT id, title, raw FROM leads WHERE url=? OR (url_key IS NOT NULL AND url_key=?) LIMIT 1`).bind(row.url, row.urlKey).first<{ id: number; title: string | null; raw: string | null }>();
@@ -293,7 +298,7 @@ ingest.post('/leads', async c => {
     await db(c.env).update(s.leads).set({ title: title ?? null, raw: raw ?? null }).where(eq(s.leads.id, existing.id));
     await c.env.DB.prepare(`UPDATE screening_items SET latest_decision_id=NULL, updated_at=? WHERE subject_kind='lead' AND subject_id=?`).bind(new Date().toISOString(), String(existing.id)).run();
   }
-  return c.json({ created, skipped: body.data.length - created });
+  return c.json({ created, skipped: body.data.length - created, filtered });
 });
 
 /**
@@ -570,7 +575,7 @@ ingest.get('/sources', async c => {
   ).all<{ source_id: string; hash: string; text: string | null }>();
   const snap = Object.fromEntries(last.results.map(r => [r.source_id, r]));
   const plats = await d.select({ id: s.platforms.id, name: s.platforms.name, status: s.platforms.status }).from(s.platforms);
-  return c.json({ sources: rows.map(r => ({ ...r, lastHash: snap[r.id]?.hash ?? null, lastText: r.kind === 'rss' ? snap[r.id]?.text ?? null : null, platform: plats.find(p => p.id === r.platformId) ?? null })) });
+  return c.json({ sources: rows.map(r => ({ ...r, lastHash: snap[r.id]?.hash ?? null, lastText: ['rss', 'web_list', 'json'].includes(r.kind) ? snap[r.id]?.text ?? null : null, platform: plats.find(p => p.id === r.platformId) ?? null })) });
 });
 
 /** 兼容旧采集器：已批准条款不再进入定期证据复抓队列。 */
@@ -672,6 +677,20 @@ ingest.get('/corrections', async c => {
     ...edits.results.map(e => ({ p: e.p, src: e.src, at: e.at, line: `「${e.t}」人工修改：${(JSON.parse(e.d) as { field: string; from: unknown; to: unknown }[]).filter(x => JSON.stringify(x.from) !== JSON.stringify(x.to)).map(x => `${x.field} ${JSON.stringify(x.from)} → ${JSON.stringify(x.to)}`).join('；')}${e.reason ? `（理由：${e.reason}）` : ''}` })),
     ...rejects.results.map(r => ({ p: r.p, src: r.src, at: r.at, line: `「${r.t}」（${r.v.slice(0, 40)}）被拒绝：${[r.code ? CODE[r.code] ?? r.code : '', r.reason ?? ''].filter(Boolean).join('，')}` })),
   ];
+  // Early rejections (lead dismissals, identity-card rejections) teach triage what never to capture. Only content
+  // categories: "duplicate"/"unverifiable"/"expired" say nothing about whether this kind of lead belongs here.
+  const EARLY: Record<string, string> = { non_ai: '与 AI 无关（含优惠券、购物券）', relay_station: '中转站', account_pool: '账号池', personal_giveaway: '个人分享/送码', paid_bundle: '付费套餐自带', ordinary_discount: '普通折扣/优惠券', model_news_only: '只是模型或价格新闻' };
+  const early = await c.env.DB.prepare(`SELECT d.subject_kind kind, d.category, d.justification why, d.labeled_at at, l.title lt, l.origin lo, ic.raw_candidate_json cj
+    FROM decision_labels d LEFT JOIN leads l ON d.subject_kind='lead' AND l.id=CAST(d.subject_id AS INTEGER) LEFT JOIN intake_candidates ic ON d.subject_kind='candidate' AND ic.id=d.subject_id
+    WHERE d.actor_kind='owner' AND d.labeled_at>=? AND d.category IN (SELECT value FROM json_each(?)) ORDER BY d.labeled_at DESC LIMIT 200`)
+    .bind(since, JSON.stringify(Object.keys(EARLY))).all<{ kind: string; category: string; why: string | null; at: string; lt: string | null; lo: string | null; cj: string | null }>();
+  for (const e of early.results) {
+    let title = e.lt, p: string | null = null;
+    if (e.kind === 'candidate' && e.cj) { try { const j = JSON.parse(e.cj) as { title?: unknown; platformId?: unknown }; title = typeof j.title === 'string' ? j.title : null; p = typeof j.platformId === 'string' ? j.platformId : null; } catch { /* unreadable candidate */ } }
+    if (!title) continue;
+    const why = e.why && !/^管理员(忽略|关闭)线索$/.test(e.why) ? `，${e.why.slice(0, 160)}` : '';
+    items.push({ p: p ?? '', src: null, at: e.at, line: `${e.kind === 'lead' ? '线索' : '候选'}「${title.slice(0, 80)}」${e.lo ? `（${e.lo}）` : ''}在入口阶段被拒：${EARLY[e.category]}${why}` });
+  }
   const rank = (x: { p: string; src: string | null }) => (source && x.src === source ? 0 : platform && x.p === platform ? 1 : 2);
   items.sort((a, b) => rank(a) - rank(b) || (a.at < b.at ? 1 : -1));
   return c.json({ corrections: items.slice(0, limit).map(x => x.line), total: items.length });
@@ -682,11 +701,11 @@ ingest.get('/offers-index', async c => {
   const input=z.object({cursor:z.string().max(200).optional(),product:z.string().max(200).optional()}).safeParse(c.req.query());
   if(!input.success)return c.json({error:'invalid index cursor'},400);
   const {cursor,product}=input.data;
-  const rows=await c.env.DB.prepare(`SELECT o.id,o.platform_id AS platformId,o.title,o.value_text AS valueText,o.claim_start AS claimStart,o.published_at AS publishedAt,o.tags,o.review_state AS reviewState,json_extract(o.evidence,'$.url') AS evidenceUrl,
+  const rows=await c.env.DB.prepare(`SELECT o.id,o.platform_id AS platformId,o.title,o.value_text AS valueText,o.claim_start AS claimStart,o.claim_end AS claimEnd,o.source_tz AS sourceTz,o.published_at AS publishedAt,o.tags,o.review_state AS reviewState,json_extract(o.evidence,'$.url') AS evidenceUrl,json_extract(o.evidence,'$.excerpts') AS excerpts,
     (SELECT d.scope_json FROM benefit_entities e JOIN review_decisions d ON d.entity_id=e.id WHERE e.canonical_offer_id=o.id AND d.action='reject' ORDER BY d.created_at DESC LIMIT 1) AS rejectionScope
     FROM offers o WHERE o.id>? AND (? IS NULL OR o.platform_id=?) ORDER BY o.id LIMIT 251`).bind(cursor??'',product??null,product??null).all<Record<string,unknown>>();
   const visible=rows.results.slice(0,250);
-  return c.json({offers:visible.map(row=>({...row,tags:JSON.parse(String(row.tags)),rejectionScope:row.rejectionScope?JSON.parse(String(row.rejectionScope)):null})),complete:rows.results.length<=250,nextCursor:rows.results.length>250?String(visible.at(-1)!.id):null});
+  return c.json({offers:visible.map(row=>({...row,tags:JSON.parse(String(row.tags)),excerpts:row.excerpts?JSON.parse(String(row.excerpts)):null,rejectionScope:row.rejectionScope?JSON.parse(String(row.rejectionScope)):null})),complete:rows.results.length<=250,nextCursor:rows.results.length>250?String(visible.at(-1)!.id):null});
 });
 
 /** 模型预算：今日 token、本月费用。 */
@@ -698,7 +717,7 @@ ingest.post('/model-budget/reserve', async c => {
   if (!body.success) return c.json({ error: '预算预留参数不正确' }, 400);
   const line = body.data.line ?? 'extraction';
   const tokenCap = Number(c.env.DAILY_TOKEN_CAP ?? 0);
-  const costCap = line === 'screening' ? Number(c.env.SCREENING_MONTHLY_CAP_CNY ?? 72) : Number(c.env.MONTHLY_COST_CAP_CNY ?? 10);
+  const costCap = line === 'screening' ? Number(c.env.SCREENING_MONTHLY_CAP_CNY ?? 72) : Number(c.env.MONTHLY_COST_CAP_CNY ?? 72);
   const freeDaily = Number(c.env.OPENROUTER_FREE_DAILY ?? 1000);
   const urgentReserve = Number(c.env.SCREENING_URGENT_RESERVE ?? 200);
   const backfillDaily = Number(c.env.SCREENING_BACKFILL_DAILY ?? 400);

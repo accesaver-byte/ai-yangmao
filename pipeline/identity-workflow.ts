@@ -4,9 +4,11 @@ import { z } from 'zod';
 import { api } from './lib';
 import { intakeReceiptSchema } from '../src/shared/identity/types';
 import { reviewIdentity,type IdentityReviewInput } from './identity-review';
-export interface IdentityMaintenanceStats {resolved:number;deferred:number;modelTasks:number;status:'processed'|'disabled'|'not_evaluated';reason?:string}
+export interface IdentityMaintenanceStats {resolved:number;deferred:number;modelTasks:number;handedToOwner?:number;errors?:Record<string,number>;status:'processed'|'disabled'|'not_evaluated';reason?:string}
 export async function resumeIdentityIntake(deadlineAt:number):Promise<IdentityMaintenanceStats> {
- const stats:IdentityMaintenanceStats={resolved:0,deferred:0,modelTasks:0,status:'processed'};
+ const stats:IdentityMaintenanceStats={resolved:0,deferred:0,modelTasks:0,handedToOwner:0,errors:{},status:'processed'};
+ // Every deferral is counted by reason: the loop used to swallow errors, so a week of failures showed only "deferred".
+ const fail=(where:string,error:unknown)=>{stats.deferred++;const key=where+': '+String(error instanceof Error?error.message:error).slice(0,120);stats.errors![key]=(stats.errors![key]??0)+1;};
  const skip=(status:IdentityMaintenanceStats['status'],reason:string)=>({...stats,status,reason});
  if(process.env.DRY_RUN==='1')return skip('disabled','dry_run');
  const mode=process.env.IDENTITY_MODE;
@@ -21,7 +23,7 @@ export async function resumeIdentityIntake(deadlineAt:number):Promise<IdentityMa
  for(const candidate of queue.candidates){
   if(Date.now()>=deadlineAt){stats.deferred++;continue;}
   try {const receipt=intakeReceiptSchema.parse(await api('/identity-candidates/'+encodeURIComponent(candidate.id)+'/resolve',{requestId:crypto.randomUUID(),expectedRevision:candidate.revision}));if(receipt.retryable)stats.deferred++;else stats.resolved++;}
-  catch {stats.deferred++;}
+  catch(error){fail('retry',error);}
  }
  // Preparation is a bounded read of existing history. Failed official fetches remain deferred.
  try {
@@ -36,16 +38,17 @@ export async function resumeIdentityIntake(deadlineAt:number):Promise<IdentityMa
       if(source.officialSource&&source.issuerProductHint){
        try {const page=await fetchPage(source.url,{tries:1,timeoutMs:10000,minimumTextLength:120});const proof=fetchedSource(page);
         if(proof.sourceText&&proof.sourceFetch?.sourceVerified&&!proof.sourceFetch.truncated)outcome=await api('/identity-preparations/'+encodeURIComponent(task.id)+'/scan',{requestId:crypto.randomUUID(),expectedRevision:revision,freshSource:proof});
-       }catch{stats.deferred++;}
-      }else stats.deferred++;
+       }catch(error){fail('fetch',error);}
+      }else fail('source','not an official source or no product hint');
      }
+     if(outcome.status==='source_unverifiable'){stats.handedToOwner!++;break;}
      if(outcome.status==='ready')break;
      if(outcome.status!=='scanning')break;
      revision=outcome.revision;
-    }catch{stats.deferred++;break;}
+    }catch(error){fail('prepare',error);break;}
    }
   }
- }catch{stats.deferred++;}
+ }catch(error){fail('preparation-queue',error);}
  if(process.env.IDENTITY_MODEL_ASSIST!=='true'||Date.now()>=deadlineAt)return stats;
  const tasks=z.object({tasks:z.array(z.object({id:z.string(),revision:z.number().int()})).max(4)}).parse(await api('/identity-tasks'));
  for(const task of tasks.tasks){
@@ -54,7 +57,7 @@ export async function resumeIdentityIntake(deadlineAt:number):Promise<IdentityMa
    const claimed=await api<{revision:number;leaseToken:string;context:IdentityReviewInput}>('/identity-tasks/'+encodeURIComponent(task.id)+'/claim',{requestId:crypto.randomUUID(),expectedRevision:task.revision});
    const result=await reviewIdentity(claimed.context,deadlineAt);
    await api('/identity-tasks/'+encodeURIComponent(task.id)+'/result',{requestId:crypto.randomUUID(),expectedRevision:claimed.revision,leaseToken:claimed.leaseToken,result});stats.modelTasks++;
-  } catch {stats.deferred++;}
+  } catch(error){fail('model',error);}
  }
  return stats;
 }

@@ -4,7 +4,8 @@ import type {FetchedPage} from './lib';
 import { resumeIdentityIntake } from './identity-workflow';
 import { postIdentityOffers } from './identity-client';
 import { captureIdentityShadow } from './identity-shadow';
-import {platformMentioned,leadScopeMismatch} from '../src/shared/lead-scope';
+import {platformMentioned,leadScopeMismatch,leadOccurrenceMismatch} from '../src/shared/lead-scope';
+import { normUrl, officialStatusKey } from '../src/shared/dedupe';
 import {runLeadReviews} from './lead-review';
 import {runFastTrack} from './fast-track';
 import { toOffer } from './offer-draft';
@@ -14,7 +15,7 @@ import { officialTier } from '../src/shared/official-review';
 // 采集管线入口：GitHub Actions 每 6 小时运行一次，也可以手动触发补跑。
 // 流程：取信源 → 抓取 → 只保留和羊毛相关的句子 → 与上次比对 → 有变化才调用模型抽取 → 写入网站（默认进待审）。
 import { aihot, feed, hn, parseFeed, reddit, type Source } from './collectors';
-import { api, fetchPage, fetchText, isFreebie, LEAD_POST_CHUNK, norm, relevantText, sha256 } from './lib';
+import { api, approvedTermsStillPresent, fetchPage, fetchText, isFreebie, LEAD_POST_CHUNK, newRelevantLines, norm, relevantText, sha256 } from './lib';
 import { DeferError, extract, llmAvailable, modelAvailable, paidAvailable, type Extracted } from './llm';
 import { BudgetExhaustedError, BudgetLedgerError, modelBudget } from './budget';
 import { offerIn, type LeadIn, type OfferIn } from '../src/shared/ingest';
@@ -25,7 +26,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const DAILY_TOKEN_CAP = Number(process.env.DAILY_TOKEN_CAP ?? 0); // 0 = 调试阶段不设每日 token 总上限
-const MONTHLY_COST_CAP = Number(process.env.MONTHLY_COST_CAP_CNY ?? 10);
+const MONTHLY_COST_CAP = Number(process.env.MONTHLY_COST_CAP_CNY ?? 72);
 let costLeft = MONTHLY_COST_CAP;
 const DRY = process.env.DRY_RUN === '1';
 const FAST = process.env.FAST_LEADS === '1';
@@ -41,7 +42,9 @@ async function screeningProfiles(): Promise<PlatformProfile[]> {
 const LEAD_LIMIT = Number(process.env.LEAD_LIMIT ?? 50);
 const onlyList = (process.env.ONLY_SOURCES ?? '').split(',').map(s => s.trim()).filter(Boolean);
 const only = onlyList.length ? onlyList : null; // 留空 = 全部信源
-const stats = { leadsTriaged: 0, leadOffers: 0, costCny: 0, deferred: 0, sources: 0, fetchedSources: 0, ok: 0, failed: 0, changed: 0, leads: 0, offers: 0, pending: 0, extractSkipped: 0, verificationChecked: 0, verificationFailed: 0, verificationDeferred: 0, tokens: 0, coverageDegraded: false, errors: [] as string[] };
+const stats = { leadsTriaged: 0, leadOffers: 0, costCny: 0, deferred: 0, backlogDeferred: 0, rereadUnchanged: 0, unchangedPages: 0, leadsLinkedByUrl: 0, systemicErrors: 0, sources: 0, fetchedSources: 0, ok: 0, failed: 0, changed: 0, leads: 0, offers: 0, pending: 0, extractSkipped: 0, verificationChecked: 0, verificationFailed: 0, verificationDeferred: 0, tokens: 0, coverageDegraded: false, errors: [] as string[] };
+/** 本轮系统性错误（某个环节整体失败），区别于单个信源、条目或线索的错误；后者在健康页逐条列出。 */
+const systemic = (message: string) => { stats.errors.push(message); stats.systemicErrors++; };
 const fetchedSourceIds=new Set<string>();
 function noteSourceFetched(src:Source){fetchedSourceIds.add(src.id);stats.fetchedSources=fetchedSourceIds.size;}
 let tokensLeft = DAILY_TOKEN_CAP > 0 ? DAILY_TOKEN_CAP : Infinity;
@@ -129,11 +132,19 @@ async function extractAndPostUnlocked(src: Source, url: string, text: string, so
     else { invalidCount++; const why = v.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('；'); stats.errors.push(`${src.id}/${e.key}: ${why}`); log(`  丢弃「${e.title}」：${why}`); }
   }
   if (!offers.length) return false; // 原文里有候选但全部校验失败，不能把页面标记为已处理
+  // 已批准条目的原文摘录仍全部在页面上：官方条款未变，只是模型重读换了说法，不提交（否则每轮生成人工身份任务）。
+  const pageText = fetchedPage?.text ?? sourceText ?? text;
+  const approvedIdx = (await offerIndex()).filter(k => k.platformId === src.platformId && k.reviewState === 'approved');
+  for (let i = offers.length - 1; i >= 0; i--) {
+    const approved = approvedIdx.find(k => k.id === offers[i].id);
+    if (approved && approvedTermsStillPresent(approved.excerpts, pageText)) { log(`  ${offers[i].id} 已批准条款原文仍在页面上，跳过重复提交`); stats.rereadUnchanged++; offers.splice(i, 1); }
+  }
+  if (!offers.length) return true;
   if (DRY) { offers.forEach(o => log('  羊毛', o.id, o.title, `类型=${o.type} 对象=${o.audience} 门槛=${o.requirements.join(',')} 额度=${o.valueText}`)); stats.offers += offers.length; return true; }
   const res = await postIdentityOffers(offers);
   if (screeningMode({ SCREENING_MODE: process.env.SCREENING_MODE }) !== 'off') {
     try { await screenCandidateReceipts(res.results, offers, await loadMemory(), { deadlineAt: deadline, dry: DRY, log }); }
-    catch (error) { stats.errors.push(`candidate screening: ${(error as Error).message}`); }
+    catch (error) { systemic(`candidate screening: ${(error as Error).message}`); }
   }
   let hasWriteError = false;
   for (const x of res.results) {
@@ -159,6 +170,8 @@ async function officialPage(src: Source) {
   const rel = relevantText(text);
   const hash = sha256(rel);
   if (hash === src.lastHash && !FORCE) { await report(src, true); log(`  无变化（${via}）`); return; }
+  // 只有出现新的羊毛相关句子才重新抽取：删句、换顺序不会带来新福利，却让已收录条目每 6 小时被模型重读一遍（2026-10-15）。
+  if (!FORCE && src.lastText != null && !newRelevantLines(src.lastText, rel).length) { await report(src, true, { hash, text: rel }); stats.unchangedPages++; log(`  只有删减或顺序变化，没有新内容（${via}）`); return; }
   stats.changed++;
   log(`  有变化（${via}，相关文本 ${rel.length} 字）`);
   const extractionSource = via === 'jina' ? { ...src, tier: 'media', autoPublish: false } : src;
@@ -265,9 +278,9 @@ async function verifyExistingOffers(sources: Source[]) {
   }
 }
 
-interface IndexedOffer { reviewState?:string; rejectionScope?:unknown; id: string; platformId: string; title: string; valueText: string; claimStart?: string | null; publishedAt?: string | null; tags?: string[]; evidenceUrl?: string }
+interface IndexedOffer { reviewState?:string; rejectionScope?:unknown; excerpts?: Record<string, string | null> | null; id: string; platformId: string; title: string; valueText: string; claimStart?: string | null; claimEnd?: string | null; sourceTz?: string | null; publishedAt?: string | null; tags?: string[]; evidenceUrl?: string }
 const indexEntry = (offer: OfferIn): IndexedOffer => ({ id: offer.id, platformId: offer.platformId, title: offer.title, valueText: offer.valueText,
-  claimStart: offer.claimStart, publishedAt: offer.publishedAt, tags: offer.tags, evidenceUrl: offer.evidence.url });
+  claimStart: offer.claimStart, claimEnd: offer.claimEnd, sourceTz: offer.sourceTz, publishedAt: offer.publishedAt, tags: offer.tags, evidenceUrl: offer.evidence.url });
 const formatOfferIndex = (offers: IndexedOffer[]) => offers.map(offer => `${offer.id}｜${offer.title}｜${offer.valueText.slice(0, 40)}｜审核:${offer.reviewState??'unknown'}${offer.rejectionScope?'｜拒绝范围:'+JSON.stringify(offer.rejectionScope):''}｜开始:${offer.claimStart ?? '未知'}${offer.tags?.includes('reset') ? `｜发布:${offer.publishedAt ?? '未知'}｜证据:${offer.evidenceUrl ?? '未知'}` : ''}`).join('\n');
 let idxCache: IndexedOffer[] | null = null;
 async function offerIndex() {
@@ -298,7 +311,7 @@ async function correctionsFor(platform: string | null, source: string | null): P
 }
 
 /* ---------- 线索研判：把线索变成待审羊毛 ---------- */
-interface Plat { id: string; name: string; site: string | null; xHandles: string[]; staffHandles: string[] }
+interface Plat { id: string; name: string; site: string | null; xHandles: string[]; staffHandles: string[]; aliases?: string[] | null; company?: string | null }
 interface Lead { id: number; origin: string; url: string; title: string | null; raw: string | null; createdAt?: string }
 const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
 /** 证据级别：平台官网域名 → site；白名单里的官方 X 账号 → official；员工账号 → staff；其余（媒体、社区、公众号转载）→ media。 */
@@ -307,7 +320,7 @@ function tierOf(url: string, p: Plat | undefined): OfferIn['evidence']['tier'] {
 }
 async function triageLeads(plats: Plat[]) {
   if (LEAD_LIMIT <= 0) return;
-  if (!llmAvailable()) { stats.deferred++; stats.errors.push('线索研判：没有可用模型'); return; }
+  if (!llmAvailable()) { stats.deferred++; systemic('线索研判：没有可用模型'); return; }
   const { leads } = await api<{ leads: Lead[] }>(`/leads?limit=${LEAD_LIMIT}`);
   if (!leads.length) return;
   const list = plats.map(p => `${p.id}=${p.name}`).join('；');
@@ -318,13 +331,20 @@ async function triageLeads(plats: Plat[]) {
   };
   const known = [...await offerIndex()];
   const knownIds = new Set(known.map(k => k.id));
-  let existing = formatOfferIndex(known);
   const pmap = new Map(plats.map(p => [p.id, p]));
   log(`研判线索 ${leads.length} 条`);
   // 每轮给官方补证保留执行时间，初抽不能独占整个40分钟工作窗口。
   const triageDeadline=Math.min(deadline-10*60_000,Date.now()+15*60_000);
   for (const l of leads) {
     if (needsWrapUp() || Date.now()>=triageDeadline || tokensLeft < 8000) { stats.deferred++; log('  预算不足或初抽时间已用完，剩余线索留到下次，继续官方补证'); break; }
+    // 线索本身就是某条已上架活动的证据原文（同一网址或同一条 X 帖子）：已收录，不再调用模型（2026-10-15）。
+    // 只看线索自己的地址，不看正文里的链接：同一价格页上出现的新活动仍要抽取。重置活动另按轮次校验。
+    const sameDoc = (a: string, b: string) => { const x = officialStatusKey(a), y = officialStatusKey(b); return x && y ? x === y : normUrl(a) === normUrl(b); };
+    const listed = known.filter(k => k.reviewState === 'approved' && k.evidenceUrl && sameDoc(l.url, k.evidenceUrl) && !leadOccurrenceMismatch(l, k));
+    if (listed.length === 1) {
+      if (!DRY) await api(`/leads/${l.id}/status`, { status: 'linked', offerId: listed[0].id });
+      stats.leadsLinkedByUrl++; log(`  #${l.id} 是已上架条目 ${listed[0].id} 的证据原文，直接关联`); continue;
+    }
     const aged = !!l.createdAt && Date.now() - Date.parse(l.createdAt) >= 2 * 3600_000;
     const allowPaid = paidAvailable() && costLeft > 0.05 && (aged || leadPriority(l) <= 1);
     if (!modelAvailable(allowPaid)) { stats.deferred++; continue; }
@@ -341,7 +361,11 @@ async function triageLeads(plats: Plat[]) {
     }
     catch { /* 补录失败也研判已有备注为媒体级草稿；不能让失效链接永远占据 new 队首。 */ }
     let r;
-    try { r = await extract('（见平台白名单）', l.url, text, log, { allowPaid, evidenceText, deadlineAt: triageDeadline, platformList: list, platformIds: mentionedPlatforms(`${l.title ?? ''}\n${text}`), profiles: await screeningProfiles(), existing, corrections: await correctionsFor(null, null), budget: modelBudget }); }
+    // 只附线索提到的平台的已有条目：整份索引（400+ 条、约 5 万字）每次都发，单次提示词 6–8 万 token，
+    // Gemini 免费档两次就 429，DeepSeek 每次约 ¥0.2（2026-10-15）。跨平台重复仍由服务端身份去重兜底。
+    const mentioned = mentionedPlatforms(`${l.title ?? ''}\n${text}`);
+    const scopedExisting = formatOfferIndex(known.filter(k => mentioned.includes(k.platformId))) || undefined;
+    try { r = await extract('（见平台白名单）', l.url, text, log, { allowPaid, evidenceText, deadlineAt: triageDeadline, platformList: list, platformIds: mentioned, profiles: await screeningProfiles(), existing: scopedExisting, corrections: await correctionsFor(null, null), budget: modelBudget }); }
     catch (e) {
       log(`  #${l.id} 抽取失败：${(e as Error).message.slice(0, 80)}`);
       if (budgetFailure(e)) { budgetBlocked = true; stats.deferred++; break; }
@@ -369,7 +393,9 @@ async function triageLeads(plats: Plat[]) {
       // 同一个活动：沿用已有条目的 id（写入接口会按修订处理，不会新开一条）
       if (e.sameAs && knownIds.has(e.sameAs)) {
         const prev = known.find(k => k.id === e.sameAs)!;
-        if (prev.platformId === p.id) { o.id = prev.id; o.sameOccurrenceAs=prev.id; log(`  #${l.id} 与已有条目 ${prev.id} 是同一活动，合并`); }
+        const staleRound = leadOccurrenceMismatch(l, prev);
+        if (staleRound) log(`  #${l.id} 模型认为同 ${prev.id}，但${staleRound}`);
+        else if (prev.platformId === p.id) { o.id = prev.id; o.sameOccurrenceAs=prev.id; log(`  #${l.id} 与已有条目 ${prev.id} 是同一活动，合并`); }
       }
       if (e.officialUrl && tier === 'media') o.steps = [...(o.steps ?? []), `官方出处：${e.officialUrl}`].slice(0, 6);
       const scopeError=p&&leadScopeMismatch(l,{...p,staffHandles:[]},[],o);
@@ -399,7 +425,6 @@ async function triageLeads(plats: Plat[]) {
           if (cached < 0) idxCache.push(entry); else idxCache[cached] = entry;
         }
       }
-      existing = formatOfferIndex(known);
       log(`  #${l.id} → ${valid.map(v => v.title).join('、')}`);
       // A known duplicate is a resolved candidate, not a failed write. Keep unknown skips/errors retryable.
       const saved = res.results.flatMap(x => {
@@ -436,7 +461,7 @@ export async function runPipeline() {
     const fastTrack = await runFastTrack({ deadlineAt: Math.min(deadline, Date.now() + 8 * 60_000), dry: DRY, log, allowPaid: () => paidAvailable() && costLeft > 0.05,
       account: (tokens, cost) => { tokensLeft -= tokens; costLeft -= cost; stats.tokens += tokens; stats.costCny += cost; } });
     if (fastTrack.claimed) Object.assign(stats, { fastTrack });
-  } catch (e) { stats.errors.push(`快速上架：${(e as Error).message}`); log('快速上架出错', (e as Error).message); }
+  } catch (e) { systemic(`快速上架：${(e as Error).message}`); log('快速上架出错', (e as Error).message); }
   // 先采集线索，再研判；全站官方页面抽取与复核不能抢走重要线索的模型预算。
   const leadSources = list.filter(s => s.kind === 'aihot' || s.tier === 'lead');
   const selected = FAST ? leadSources.filter(s => s.kind === 'aihot' || s.kind === 'feed' || s.kind === 'discord') : leadSources;
@@ -449,22 +474,24 @@ export async function runPipeline() {
     try {
       const screening = await runScreening({ ids: (process.env.SCREENING_IDS ?? '').split(',').map(id => id.trim()).filter(Boolean), deadlineAt: deadline, dry: DRY });
       Object.assign(stats, { screening, memoryRecords: screening.memoryRecords });
-    } catch (e) { stats.errors.push(`筛查：${(e as Error).message}`); stats.coverageDegraded = true; log('筛查出错', (e as Error).message); }
+    } catch (e) { systemic(`筛查：${(e as Error).message}`); log('筛查出错', (e as Error).message); }
     await triageLeads(platforms);
-  } catch (e) { stats.errors.push(`线索研判：${(e as Error).message}`); stats.deferred++; log('线索研判出错', (e as Error).message); }
+  } catch (e) { systemic(`线索研判：${(e as Error).message}`); stats.deferred++; log('线索研判出错', (e as Error).message); }
   try {
     const leadReview=await runLeadReviews({limit:Number(process.env.LEAD_REVIEW_LIMIT??4),ids:(process.env.LEAD_REVIEW_IDS??'').split(',').filter(Boolean).map(Number),deadlineAt:Math.min(deadline,Date.now()+12*60_000),dry:DRY,
       allowPaid:paidAvailable()&&costLeft>0.05,canContinue:()=>!needsWrapUp()&&tokensLeft>=8000,
       account:(tokens,cost)=>{tokensLeft-=tokens;costLeft-=cost;stats.tokens+=tokens;stats.costCny+=cost;},log});
-    Object.assign(stats,{leadReview});if(leadReview.retry||leadReview.deferred)stats.deferred++;
-  }catch(e){stats.deferred++;stats.errors.push('受阻线索复核：'+(e as Error).message);}
+    // 复核队列本轮没排到或等待重试是积压，不是采集覆盖失败：计入 backlogDeferred，否则每轮都“不完整”，健康告警失去意义（2026-10-15）。
+    Object.assign(stats,{leadReview});stats.backlogDeferred+=leadReview.retry+leadReview.deferred;
+  }catch(e){stats.deferred++;systemic('受阻线索复核：'+(e as Error).message);}
   try {
   const officialReview = await runOfficialReviews({limit:Number(process.env.OFFICIAL_REVIEW_LIMIT ?? 8),deadlineAt:deadline,dry:DRY,
     allowPaid:paidAvailable()&&costLeft>0.05,canContinue:()=>!needsWrapUp()&&tokensLeft>=8000,
     account:(tokens,cost)=>{tokensLeft-=tokens;costLeft-=cost;stats.tokens+=tokens;stats.costCny+=cost;},log});
   Object.assign(stats,{officialReview});
-  if(officialReview.failed||officialReview.deferred)stats.deferred++;
-  } catch(error) { stats.deferred++; stats.errors.push(`官方复核：${(error as Error).message}`); }
+  if(officialReview.failed)stats.deferred++;
+  stats.backlogDeferred+=officialReview.deferred;
+  } catch(error) { stats.deferred++; systemic(`官方复核：${(error as Error).message}`); }
   if (!FAST) {
     const queue = list.filter(s => !leadSources.includes(s));
     await Promise.all(Array.from({ length: 4 }, async () => {
@@ -474,13 +501,18 @@ export async function runPipeline() {
     try { await verifyExistingOffers(sources); }
     catch (error) {
       stats.verificationFailed++;
-      stats.errors.push(`读取复核队列失败：${(error as Error).message}`);
+      systemic(`读取复核队列失败：${(error as Error).message}`);
     }
   }
-  try {const identity=await resumeIdentityIntake(Math.min(deadline,Date.now()+90000));Object.assign(stats,{identity});stats.deferred+=identity.deferred;if(identity.status==='not_evaluated')stats.errors.push('身份维护未评估：'+identity.reason);}catch{stats.deferred++;stats.errors.push('身份候选重试暂不可用');}
-  stats.coverageDegraded = stats.deferred > 0 || stats.extractSkipped > 0 || stats.failed > 0 || stats.verificationFailed > 0
-    || stats.verificationDeferred > 0 || stats.errors.length > 0 || list.some(source => source.deferThisRun);
-  const ok = (FAST || !only) && stats.sources > 0 && stats.ok === stats.sources && !stats.coverageDegraded;
+  // Leads whose identity cards are all decided, or stuck in automatic review, would otherwise wait forever (2026-10-16).
+  if(!DRY)try {const swept={reconciled:0,handedToOwner:0,remaining:0};for(let i=0;i<6;i++){const r=await api<{reconciled:number;handedToOwner:number;remaining:number}>('/lead-sweep',{});swept.reconciled+=r.reconciled;swept.handedToOwner+=r.handedToOwner;swept.remaining=r.remaining;if(!r.reconciled||!r.remaining)break;}Object.assign(stats,{leadSweep:swept});} catch(error){log('线索清理失败', error instanceof Error ? error.message : error);}
+  try {const identity=await resumeIdentityIntake(Math.min(deadline,Date.now()+90000));Object.assign(stats,{identity});stats.backlogDeferred+=identity.deferred;if(identity.status==='not_evaluated')systemic('身份维护未评估：'+identity.reason);}catch{stats.deferred++;systemic('身份候选重试暂不可用');}
+  // 个别信源失败在健康页逐条列出；只有系统性错误、未完成的工作或失败超过 5% 才算本轮覆盖不完整。
+  // 2026-10-16：几个长期打不开的页面让“最近一次完整成功采集”8 天没有更新，告警一直亮着而失去意义。
+  const failureTolerance = Math.floor(stats.sources * 0.05);
+  stats.coverageDegraded = stats.deferred > 0 || stats.extractSkipped > 0 || stats.failed > failureTolerance || stats.verificationFailed > 0
+    || stats.verificationDeferred > 0 || stats.systemicErrors > 0 || list.some(source => source.deferThisRun);
+  const ok = (FAST || !only) && stats.sources > 0 && stats.sources - stats.ok <= failureTolerance && !stats.coverageDegraded;
   log('完成', JSON.stringify(stats));
   // 模型调用逐次在 runs(kind=model) 预留并结算；汇总行不能再次计费。
   if (!DRY) await api('/runs', { kind: FAST ? 'sweep' : 'collect', startedAt, finishedAt: new Date().toISOString(), ok, stats, tokens: 0, costCny: 0 });

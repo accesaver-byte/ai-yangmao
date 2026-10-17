@@ -20,6 +20,8 @@ export interface OfficialPlatform {
   /** WeChat official-account __biz IDs, comma separated; other text in the field is ignored. */
   wechat?: string | null;
   xHandles: string[]; staffHandles: string[];
+  /** Product names that also identify the platform (0043). */
+  aliases?: string[] | null;
 }
 export interface OfficialSource { url: string; tier: string; platformId?: string | null }
 type Activity = {title:string;valueText:string;type:string;tags?:string[]};

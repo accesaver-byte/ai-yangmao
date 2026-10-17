@@ -1,3 +1,5 @@
+import { sweepStuckLeads } from './lead-sweep';
+import { regroupOpenCards } from './perk-group';
 import {preparationQueue,preparationSource,recordIdentityHint,scanIdentityTask} from './preparation';
 import {identityReviewPresentation} from './review-presentation';
 import {previewBackfillObject,applyBackfillObject,backfillSourceSchema,objectBackfillPlanSchema} from './production-backfill';
@@ -55,6 +57,7 @@ async function requireTaskSelected(env:Env,id:string){
  const products=taskProducts(env);
  if(env.IDENTITY_MODE!=='enforce'||!products.length||!await env.DB.prepare(`SELECT 1 FROM review_tasks t WHERE t.id=? AND ${selectedTaskSql}`).bind(id,JSON.stringify(products)).first())throw new IdentityError(409,'identity task is outside the active Worker canary');
 }
+identityIngestRoutes.post('/lead-sweep',async c=>c.json(await sweepStuckLeads(c.env.DB)));
 identityIngestRoutes.get('/identity-preparations',async c=>{const products=taskProducts(c.env);if(c.env.IDENTITY_MODE!=='enforce'||!products.length)return c.json({tasks:[]});return c.json(await preparationQueue(c.env.DB,products));});
 identityIngestRoutes.get('/identity-preparations/:id/source',async c=>{await requireTaskSelected(c.env,c.req.param('id'));return c.json(await preparationSource(c.env.DB,c.req.param('id')));});
 identityIngestRoutes.post('/identity-preparations/:id/scan',async c=>{await requireTaskSelected(c.env,c.req.param('id'));return c.json(await scanIdentityTask(c.env.DB,c.req.param('id'),await c.req.json()));});
@@ -114,6 +117,11 @@ identityAdminRoutes.get('/tasks/:id/comparisons',async c=>{
  const rows=(await c.env.DB.prepare("SELECT e.id,e.business_revision,e.canonical_offer_id,o.title,o.value_text,o.review_state,json_extract(o.evidence,'$.url') source_url FROM benefit_entities e LEFT JOIN offers o ON o.id=e.canonical_offer_id WHERE e.state='active' AND e.platform_id=? AND e.id>? ORDER BY e.id LIMIT 41").bind(trusted[0],input.data.cursor).all<{id:string;business_revision:number;canonical_offer_id:string|null;title:string|null;value_text:string|null;review_state:string|null;source_url:string|null}>()).results;
  const entries=rows.slice(0,40).map(r=>({entityId:r.id,entityRevision:r.business_revision,offerId:r.canonical_offer_id,title:r.title??'历史条目资料不全',valueText:r.value_text??'',reviewState:r.review_state,sourceUrl:r.source_url}));
  return c.json({issuerProductId:trusted[0],entries,complete:rows.length<=40,nextCursor:rows.length>40?rows[39].id:null,reason:rows.length>40?'正在继续读取同一发放产品的历史活动。':'同一发放产品的活动列表已读取；是否为同一次发放仍需核对权益与轮次。'});
+});
+identityAdminRoutes.post('/regroup',async c=>{
+ if(c.get('role')!=='admin')return c.json({error:'administrator required'},403);
+ const body=await c.req.json().catch(()=>({})) as {dryRun?:boolean};
+ return c.json(await regroupOpenCards(c.env.DB,{dryRun:body.dryRun!==false}));
 });
 identityAdminRoutes.post('/tasks/:id/prepare',async c=>{
  await requireTaskSelected(c.env,c.req.param('id'));

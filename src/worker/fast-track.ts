@@ -4,6 +4,7 @@ import { collectedOfferIn } from '../shared/ingest';
 import { officialTier, wechatBiz, type OfficialPlatform } from '../shared/official-review';
 import { canonicalTermsSchema, type CanonicalTermsV1, type IntakeReceipt } from '../shared/identity/types';
 import { adaptLegacyOffer } from './identity/adapters';
+import { entityOfferVersion } from './identity/canonical';
 import { IdentityService } from './identity/service';
 import { IdentityError } from './identity/store';
 import { IdentityQueryBudgetError, withIdentityQueryBudget } from './identity/budget';
@@ -18,6 +19,9 @@ import { mergeFastTrackFields, missingBasicFields, type FastTrackFields } from '
  */
 export class FastTrackError extends Error { constructor(public status: 400 | 403 | 404 | 409, message: string) { super(message); } }
 
+/** Vendor IDs are lowercase slugs; an admin typing "Replicas" or "My Vendor" means replicas / my-vendor. */
+const slugId = (value: string) => value.normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
 export const FAST_TRACK_LEASE_MS = 15 * 60_000;
 export const FAST_TRACK_MAX_ATTEMPTS = 3;
 export const FAST_TRACK_PUSH_HOLD_MS = 24 * 3600_000;
@@ -29,7 +33,7 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const fastTrackInput = z.object({
   platformId: z.string().min(1).optional(),
-  newPlatform: z.object({ name: z.string().trim().min(2).max(100), id: z.string().regex(/^[a-z0-9][a-z0-9-]{1,60}$/).optional(), type: z.enum(['lab', 'cloud', 'infra', 'tool', 'new']).default('new') }).optional(),
+  newPlatform: z.object({ name: z.string().trim().min(2).max(100), id: z.string().transform(slugId).pipe(z.string().regex(/^[a-z0-9][a-z0-9-]{1,60}$/, '厂商 ID 只能用英文字母、数字和 -，如 replicas；不确定可留空')).optional(), type: z.enum(['lab', 'cloud', 'infra', 'tool', 'new']).default('new') }).optional(),
   url: z.url().refine(url => /^https:\/\//.test(url), '只收 https 链接'),
   benefit: z.string().trim().min(2).max(500),
   basis: z.enum(['official', 'tested']).default('official'),
@@ -38,10 +42,11 @@ export const fastTrackInput = z.object({
   claimStart: isoDate.optional(),
   claimEnd: isoDate.optional(),
   leadId: z.number().int().positive().optional(),
+  identityTaskId: z.string().min(1).max(200).optional(),
 }).refine(v => !!v.platformId !== !!v.newPlatform, '选择已有厂商或填写新厂商，二选一');
 export type FastTrackInput = z.input<typeof fastTrackInput>;
 
-interface JobRow { id: string; platform_id: string; url: string; benefit: string; basis: 'official' | 'tested'; note: string | null; owner_fields_json: string; lead_id: number | null; state: string; lease_until: string | null; attempts: number; fields_json: string | null; progress_json: string | null; missing_json: string | null; error: string | null; offer_id: string | null; actor: string; created_at: string; updated_at: string; published_at: string | null }
+interface JobRow { id: string; platform_id: string; url: string; benefit: string; basis: 'official' | 'tested'; note: string | null; owner_fields_json: string; lead_id: number | null; identity_task_id?: string | null; state: string; lease_until: string | null; attempts: number; fields_json: string | null; progress_json: string | null; missing_json: string | null; error: string | null; offer_id: string | null; actor: string; created_at: string; updated_at: string; published_at: string | null }
 interface PlatformRow { id: string; name: string; status: string; site: string | null; x_handles: string; staff_handles: string; wechat: string | null }
 
 const toOfficial = (p: PlatformRow): OfficialPlatform => ({ id: p.id, name: p.name, site: p.site, xHandles: JSON.parse(p.x_handles || '[]'), staffHandles: JSON.parse(p.staff_handles || '[]'), wechat: p.wechat });
@@ -49,20 +54,40 @@ const hostOf = (url: string) => new URL(url).hostname.toLowerCase().replace(/^ww
 async function platformRow(db: D1Database, id: string) { return db.prepare('SELECT id,name,status,site,x_handles,staff_handles,wechat FROM platforms WHERE id=?').bind(id).first<PlatformRow>(); }
 async function platformSources(db: D1Database, id: string) { return (await db.prepare('SELECT url,tier FROM sources WHERE platform_id=?').bind(id).all<{ url: string; tier: string }>()).results; }
 
+/** 公众号文章页里的账号 __biz（var biz = "..."）；验证页、超时或格式不符时返回 null。 */
+export async function wechatBizFromArticle(url: string): Promise<string | null> {
+  try {
+    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36' }, signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return null;
+    const biz = /var\s+biz\s*=\s*["']([A-Za-z0-9+/=]{8,40})["']/.exec(await r.text())?.[1];
+    return biz ?? null;
+  } catch { return null; }
+}
+
 /** Record `url` as the vendor's official address: WeChat account, X handle, site or official source. */
 export async function registerOfficialAddress(db: D1Database, platformId: string, url: string, actor: string): Promise<{ kind: 'wechat' | 'x' | 'site' | 'source' | 'existing'; value: string }> {
   const host = hostOf(url);
   if (host === 'mp.weixin.qq.com') {
-    const biz = wechatBiz(url);
-    if (!biz) throw new FastTrackError(400, '公众号链接需要带 __biz：请在微信里用“复制链接”取得完整文章链接');
-    await learnWechatAccount(db, platformId, url);
-    return { kind: 'wechat', value: biz };
+    // 管理员担保的公众号链接一律接受（2026-10-16）。微信的分享短链（/s/xxxx）不带 __biz，且微信对自动访问常返回验证页：
+    // 先尝试从正文读出账号 __biz 并登记该公众号；读不到时只把这一篇文章登记为官方信源，不放行整个公众号域名。
+    const biz = wechatBiz(url) ?? await wechatBizFromArticle(url);
+    if (biz) {
+      await learnWechatAccount(db, platformId, wechatBiz(url) ? url : `${url}${url.includes('?') ? '&' : '?'}__biz=${encodeURIComponent(biz)}`);
+      return { kind: 'wechat', value: biz };
+    }
+    if (!await db.prepare('SELECT 1 FROM sources WHERE url=?').bind(url).first())
+      await db.prepare("INSERT INTO sources(id,platform_id,kind,url,tier,config,enabled,auto_publish) VALUES(?,?,'web_list',?,'official',?,0,0)")
+        .bind(`${platformId}-ft-wx-${Date.now().toString(36)}`.slice(0, 80), platformId, url, JSON.stringify({ addedBy: actor, fastTrack: true, wechatArticle: true })).run();
+    return { kind: 'source', value: url };
   }
   const platform = await platformRow(db, platformId);
   if (!platform) throw new FastTrackError(404, '没有这个厂商');
   if (host === 'x.com' || host === 'twitter.com') {
     const handle = new URL(url).pathname.split('/').filter(Boolean)[0]?.toLowerCase();
     if (!handle || ['i', 'home', 'search', 'intent', 'explore'].includes(handle)) throw new FastTrackError(400, 'X 链接需要是厂商账号或其推文');
+    // 已登记的员工账号保持员工级别：不能因快速上架升级成官方账号（2026-10-15 Tibo 帖子曾被加入 x_handles）。
+    const staff: string[] = JSON.parse(platform.staff_handles || '[]');
+    if (staff.some(h => h.toLowerCase() === '@' + handle)) return { kind: 'existing', value: '@' + handle };
     const handles: string[] = JSON.parse(platform.x_handles || '[]');
     if (!handles.some(h => h.toLowerCase() === '@' + handle)) await db.prepare('UPDATE platforms SET x_handles=?, updated_at=? WHERE id=?').bind(JSON.stringify([...handles, '@' + handle]), new Date().toISOString(), platformId).run();
     return { kind: 'x', value: '@' + handle };
@@ -80,12 +105,17 @@ export async function registerOfficialAddress(db: D1Database, platformId: string
 }
 
 function newPlatformId(name: string, url: string): string | null {
-  const ascii = name.normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const ascii = slugId(name);
   if (/^[a-z0-9][a-z0-9-]{1,60}$/.test(ascii)) return ascii;
   const host = hostOf(url);
   if (SHARED_HOSTS.has(host)) return null;
   const label = host.split('.').slice(-2, -1)[0] ?? '';
   return /^[a-z0-9][a-z0-9-]{1,60}$/.test(label) ? label : null;
+}
+
+async function hashedPlatformId(name: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(name.normalize('NFKC'))));
+  return 'v-' + [...digest.slice(0, 4)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /** Owner submission: admit/create the vendor, register the URL as official, queue extraction, start a run. */
@@ -95,8 +125,8 @@ export async function createFastTrack(env: Env, raw: unknown, actor: string): Pr
   const input = parsed.data, db = env.DB, now = new Date().toISOString();
   let platformId: string;
   if (input.newPlatform) {
-    const id = input.newPlatform.id ?? newPlatformId(input.newPlatform.name, input.url);
-    if (!id) throw new FastTrackError(400, '新厂商名称无法生成 ID，请填写厂商 ID（小写字母、数字、短横线）');
+    // The ID is internal: a Chinese-only name on a shared host (X, WeChat) gets a stable hash ID instead of asking the owner.
+    const id = input.newPlatform.id ?? newPlatformId(input.newPlatform.name, input.url) ?? await hashedPlatformId(input.newPlatform.name);
     const site = SHARED_HOSTS.has(hostOf(input.url)) ? null : new URL(input.url).origin;
     await db.prepare("INSERT INTO platforms(id,name,type,status,site) VALUES(?,?,?,'approved',?) ON CONFLICT(id) DO UPDATE SET status='approved', updated_at=?")
       .bind(id, input.newPlatform.name, input.newPlatform.type, site, now).run();
@@ -108,18 +138,19 @@ export async function createFastTrack(env: Env, raw: unknown, actor: string): Pr
     platformId = platform.id;
   }
   if (input.leadId && !await db.prepare('SELECT 1 FROM leads WHERE id=?').bind(input.leadId).first()) throw new FastTrackError(404, '没有这条线索');
+  if (input.identityTaskId && !await db.prepare('SELECT 1 FROM review_tasks WHERE id=?').bind(input.identityTaskId).first()) throw new FastTrackError(404, '没有这个审核任务');
   const registered = await registerOfficialAddress(db, platformId, input.url, actor);
   const owner = Object.fromEntries(Object.entries({ title: input.title, claimStart: input.claimStart, claimEnd: input.claimEnd }).filter(([, v]) => v));
   const jobId = crypto.randomUUID();
-  await db.prepare("INSERT INTO fast_track_jobs(id,platform_id,url,benefit,basis,note,owner_fields_json,lead_id,state,actor,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'queued',?,?,?)")
-    .bind(jobId, platformId, input.url, input.benefit, input.basis, input.note ?? null, JSON.stringify(owner), input.leadId ?? null, actor, now, now).run();
+  await db.prepare("INSERT INTO fast_track_jobs(id,platform_id,url,benefit,basis,note,owner_fields_json,lead_id,identity_task_id,state,actor,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'queued',?,?,?)")
+    .bind(jobId, platformId, input.url, input.benefit, input.basis, input.note ?? null, JSON.stringify(owner), input.leadId ?? null, input.identityTaskId ?? null, actor, now, now).run();
   const dispatched = await dispatchCollect(env, true).catch(() => ({ ok: false }));
   return { jobId, platformId, registered, dispatched: dispatched.ok };
 }
 
 export async function listFastTrack(db: D1Database) {
   const rows = await db.prepare('SELECT j.*, p.name platform_name FROM fast_track_jobs j JOIN platforms p ON p.id=j.platform_id ORDER BY j.created_at DESC LIMIT 30').all<JobRow & { platform_name: string }>();
-  return rows.results.map(r => ({ id: r.id, platformId: r.platform_id, platformName: r.platform_name, url: r.url, benefit: r.benefit, basis: r.basis, state: r.state, attempts: r.attempts, missing: r.missing_json ? JSON.parse(r.missing_json) as string[] : [], error: r.error, offerId: r.offer_id, leadId: r.lead_id, createdAt: r.created_at, publishedAt: r.published_at }));
+  return rows.results.map(r => ({ id: r.id, platformId: r.platform_id, platformName: r.platform_name, url: r.url, benefit: r.benefit, basis: r.basis, state: r.state, attempts: r.attempts, missing: r.missing_json ? JSON.parse(r.missing_json) as string[] : [], error: r.error, offerId: r.offer_id, leadId: r.lead_id, identityTaskId: r.identity_task_id ?? null, createdAt: r.created_at, publishedAt: r.published_at }));
 }
 
 export async function fastTrackQueue(db: D1Database, now = new Date()) {
@@ -142,7 +173,7 @@ function terms(platformId: string, type: string): CanonicalTermsV1 {
   return canonicalTermsSchema.parse({ schemaVersion: 'terms-v1', issuerProductId: { state: 'known', value: platformId, evidenceRefs: ['benefit'] }, mechanism: { state: 'known', value: MECHANISM[type] ?? 'other', evidenceRefs: ['benefit'] }, benefitPools: [], eligibility: unknown, geography: unknown, claimChannels: unknown, costs: unknown, claimWindow: unknown, occurrenceAnchor: unknown });
 }
 
-interface Progress { pending?: { candidateId: string; requestId: string }; receipt?: IntakeReceipt; entityId?: string; offerId?: string; approved?: boolean }
+interface Progress { pending?: { candidateId: string; requestId: string }; receipt?: IntakeReceipt; entityId?: string; offerId?: string; approved?: boolean; testedTask?: { id: string; revision: number } | null; testedTier?: boolean }
 /** Identity work gets its own slice of the 50-query request budget; the rest is left for job bookkeeping. */
 const IDENTITY_SLICE = 38;
 class StepDeferred extends Error {}
@@ -214,13 +245,45 @@ export async function publishFastTrack(env: Env, job: JobRow, fields: FastTrackF
     progress.approved = true;
     await save();
   }
+  // 管理员担保“我亲测可领”：身份入库不接受 tested 证据，先按链接级别上架，再像后台编辑一样把证据级别改为 tested 并批准，
+  // 不让条目显示成链接页面的原文（2026-10-16 ZCode Weekend Build 曾被标成官网原文）。
+  if (job.basis === 'tested' && !progress.testedTier) {
+    // 两步分别保存进度：编辑出草稿、再批准草稿；单个请求的查询预算不够时下个请求接着做。
+    if (progress.testedTask === undefined) {
+      const row = await db.prepare("SELECT o.evidence,o.updated_at,e.id,e.business_revision FROM offers o JOIN benefit_entities e ON e.canonical_offer_id=o.id AND e.state='active' WHERE o.id=?").bind(progress.offerId)
+        .first<{ evidence: string; updated_at: string; id: string; business_revision: number }>();
+      const evidence = row ? JSON.parse(row.evidence) as Record<string, unknown> : null;
+      if (!row || !evidence || evidence.tier === 'tested') progress.testedTask = null;
+      else {
+        const edit = await step(() => service.editManagedOffer(progress.offerId!, { requestId: `fast-track-tested:${job.id}`, expectedOfferVersion: entityOfferVersion(row, row.updated_at), fields: { evidence: { ...evidence, tier: 'tested' } }, actor: job.actor }));
+        progress.testedTask = edit.taskId ? { id: edit.taskId, revision: edit.revision } : null;
+      }
+      await save();
+    }
+    const task = progress.testedTask;
+    if (task) await step(() => service.decideTask(task.id, { requestId: `fast-track-tested-approve:${job.id}`, expectedRevision: task.revision, action: 'approve', actor: job.actor, role: 'admin', reason: '管理员快速上架（亲测）：证据级别为管理员实测' }));
+    progress.testedTier = true;
+    await save();
+  }
   await db.prepare('UPDATE offers SET fast_tracked_at=? WHERE id=?').bind(now, progress.offerId).run();
   return { offerId: progress.offerId!, alreadyLive: false };
 }
 
 async function linkLead(db: D1Database, leadId: number, offerId: string) {
   const resolution = { status: 'linked', jobId: 'fast-track-' + crypto.randomUUID(), attempts: 0, inconclusive: 0, checkedAt: new Date().toISOString(), nextAttemptAt: null, reason: '管理员快速上架', queries: [], candidates: [], offerIds: [offerId] };
-  await db.prepare("UPDATE leads SET status='linked', offer_id=?, resolution=? WHERE id=? AND status IN ('new','reviewing')").bind(offerId, JSON.stringify(resolution), leadId).run();
+  // A wrongly auto-closed lead fast-tracked from the spot-check list links too (2026-10-16).
+  await db.prepare("UPDATE leads SET status='linked', offer_id=?, resolution=? WHERE id=? AND status IN ('new','reviewing','rejected')").bind(offerId, JSON.stringify(resolution), leadId).run();
+}
+
+/**
+ * The owner fast-tracked from an identity review card: close that task as a duplicate of the offer just published.
+ * Best effort — a task already decided, or one whose shape needs an explicit identity decision, is left for the owner.
+ */
+async function closeIdentityTask(db: D1Database, job: JobRow, offerId: string) {
+  const task = await db.prepare("SELECT id,revision FROM review_tasks WHERE id=? AND state IN ('open','checking','manual')").bind(job.identity_task_id).first<{ id: string; revision: number }>();
+  if (!task) return;
+  await new IdentityService(db).decideTask(task.id, { requestId: `fast-track-close:${job.id}`, expectedRevision: task.revision, action: 'reject', actor: job.actor, role: 'admin', reasonCode: 'duplicate',
+    reason: `管理员已快速上架为 ${offerId}；本任务候选与之为同一活动` }).catch(error => { if (!(error instanceof IdentityError)) throw error; });
 }
 
 type PublishState = { state: 'published' | 'publishing' | 'needs_owner'; offerId?: string; missing?: string[]; error?: string; alreadyLive?: boolean };
@@ -239,6 +302,7 @@ async function attemptPublish(env: Env, job: JobRow): Promise<PublishState> {
     const published = await publishFastTrack(env, job, fields, stored.sourceText ?? '', progress, save);
     await db.prepare("UPDATE fast_track_jobs SET state='published', offer_id=?, progress_json=?, missing_json=NULL, error=NULL, lease_until=NULL, published_at=?, updated_at=? WHERE id=?").bind(published.offerId, JSON.stringify(progress), now(), now(), job.id).run();
     if (job.lead_id) await linkLead(db, job.lead_id, published.offerId);
+    if (job.identity_task_id) await closeIdentityTask(db, job, published.offerId);
     return { state: 'published', offerId: published.offerId, alreadyLive: published.alreadyLive };
   } catch (error) {
     // A step that cannot finish even with a fresh request budget would loop forever: hand it to the owner.

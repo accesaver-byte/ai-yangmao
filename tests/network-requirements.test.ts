@@ -13,6 +13,10 @@ describe('administrator network access policy',()=>{
  it('separates editions sharing a platform ID and does not infer edition from announcement language',()=>{
   expect(networkEdition(candidate('qoder','https://docs.qoder.cn/events/flashoffer'))).toBe('domestic');
   expect(applyNetworkRequirements(candidate('qoder','https://docs.qoder.com/events/flashoffer')).requirements).toEqual(['net']);
+  // 飞书国内版与 Lark 国际版同一平台 ID（2026-10-16）
+  expect(networkEdition(candidate('feishu','https://www.feishu.cn/product/feishuai'))).toBe('domestic');
+  expect(applyNetworkRequirements(candidate('feishu','https://www.larksuite.com/en_sg/')).requirements).toEqual(['net']);
+  expect(networkEdition(candidate('feishu','https://example.com/post'))).toBe('unknown');
   expect(applyNetworkRequirements(candidate('workbuddy','https://x.com/WorkBuddy_AI/status/1',['none'],'WorkBuddy 国际版邀请奖励')).requirements).toEqual(['net']);
   expect(applyNetworkRequirements(candidate('workbuddy','https://x.com/company/status/1')).requirements).toEqual(['unknown']);
  });

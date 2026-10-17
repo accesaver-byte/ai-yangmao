@@ -1,6 +1,6 @@
 # 文档索引
 
-当前文档校对：2026-10-12。按下面的职责找现役答案；带日期的记录仅证明当次操作与快照，不能据此批准活动或推断当前数量。
+当前文档校对：2026-10-15。按下面的职责找现役答案；带日期的记录仅证明当次操作与快照，不能据此批准活动或推断当前数量。
 
 ## 现役文档
 
@@ -19,7 +19,7 @@ Fork 同步、独立分支、PR 与正式发布边界见 [协作流程](collabor
 | 逐条审核的操作流程 | [仓库审核技能](../.claude/skills/yangmao-review/SKILL.md) |
 | 外部 Agent 查询与 MCP 接入 | [公开接入规格](specs/public-agent-access.md) / [公开 Skill](../integrations/agent/ai-yangmao-public/SKILL.md) |
 | Hermes 的查询和管理操作 | [Hermes 接入模板](../integrations/hermes/ai-yangmao/SKILL.md)；安装副本需单独核对 |
-| 最近一次知识与运行态核对 | [2026-10-14 整理凭证](closeout-2026-10-14.md)（前一次：[2026-10-13](closeout-2026-10-13.md)） |
+| 最近一次知识与运行态核对 | [2026-10-16 整理凭证](closeout-2026-10-16.md)（前一次：[2026-10-15](closeout-2026-10-15.md)） |
 
 ## 方案与实施范围
 

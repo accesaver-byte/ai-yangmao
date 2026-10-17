@@ -4,7 +4,7 @@
  */
 const domestic = new Set(`aliyun baichuan baidu coze deepseek doubao-work huaweicloud jimeng liblibtv lingxi meituan moark modelscope ppio qiniu qwenwork sensenova stepfun tencent tencent-hy tokenrhythm unisound volc xiaomi-mimo zhipu`.split(' '));
 const international = new Set(`adobe-firefly anthropic aws azure browser-use cerebras cline cloudflare cohere copilot cursor deepinfra devin dreamina elevenlabs fireworks free-ai gamma gcloud genspark github gmi google groq hf higgsfield hume ideogram inception kilo kiro krea leonardo lovable lovart luma magnific manus meshy meta midjourney mistral n8n niteshift nous novita nvidia oiioii openai opencode openrouter otter pika pixverse poe pollo runway seaart suno tapnow thinking-machines together tripo vercel windsurf worldlabs xai`.split(' '));
-const mixed = new Set(['qoder','workbuddy','hailuo','kling','minimax','moonshot','trae','vidu','siliconflow']);
+const mixed = new Set(['qoder','workbuddy','hailuo','kling','minimax','moonshot','trae','vidu','siliconflow','feishu']);
 export interface NetworkCandidate { platformId?: string; title: string; requirements: string[]; evidence?: { url?: string }; }
 export function networkEdition(candidate: NetworkCandidate, url?: string): 'domestic'|'international'|'unknown' {
  const id=candidate.platformId;
@@ -24,6 +24,7 @@ export function networkEdition(candidate: NetworkCandidate, url?: string): 'dome
  if(id==='moonshot')return is('moonshot.ai')?'international':is('moonshot.cn')||is('kimi.com')?'domestic':'unknown';
  if(id==='trae')return is('trae.cn')?'domestic':is('trae.ai')?'international':'unknown';
  if(id==='vidu')return is('vidu.cn')?'domestic':is('vidu.com')?'international':'unknown';
+ if(id==='feishu')return is('larksuite.com')||is('larkoffice.com')?'international':is('feishu.cn')?'domestic':'unknown';
  return is('siliconflow.cn')?'domestic':is('siliconflow.com')?'international':'unknown';
 }
 export function applyNetworkRequirements<T extends NetworkCandidate>(candidate:T,url?:string):T {
