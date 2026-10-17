@@ -2082,6 +2082,8 @@ async function admQueue() {
     ${q.needsVerification?.length ? `<details data-stale-approved><summary>已批准 · 待核验 ${q.needsVerification.length} 项</summary><p class="small muted">以前的通过决定仍保留。这些活动暂不算当前可领：可能是官方原文改写、页面暂不可读，或距离上次成功核验过久。请核对官网后修订证据；不要重新批准原条目，也不要仅凭待核验判断已经结束。</p><div data-stale-body class="grid g2"></div><button type="button" class="btn sm" data-stale-more hidden>加载更多待核验活动</button></details>` : ''}
     <section data-activity-section><h3>活动待审</h3><p class="small muted">证据充分后再由你决定。系统补证、模型建议都不会自动通过上架。</p><h4>等待你决定 · ${readyCards.length} 项</h4><div class="grid g2">${readyCards.map(o=>card(o)).join('')||'<p class="small muted">当前没有资料齐备的活动需要你决定。</p>'}</div>${evidenceCards.length?`<details data-system-evidence open><summary>系统补证 / 补证受阻 · ${evidenceCards.length} 项</summary><div class="grid g2">${evidenceCards.map(o=>card(o)).join('')}</div></details>`:''}<div data-identity-slot></div></section>
     ${q.incomplete?.length ? `<section><details data-incomplete><summary style="cursor:pointer">${secH('已上架、字段待补', `${q.incomplete.length} 条：补齐后日历、时间线、按模型找、价值统计等栏目才完整`)}</summary><div class="grid g2" data-incomplete-body></div></details></section>` : ''}`;
+  box.insertAdjacentHTML('afterbegin', urgentReviewHtml(q));
+  bindUrgentReview(box, q);
   const identityBox=box.querySelector('[data-identity-slot]');identityBox.dataset.identityReview='';const remainingTasks=(identity.tasks||[]).filter(t=>!managedIds.has(t.id));if(remainingTasks.length||identity.error||identity.nextCursor)renderIdentityTasks(identityBox,{...identity,tasks:remainingTasks},false,managedIds);
   const pausedSection=document.createElement('details');pausedSection.dataset.pausedSection='';pausedSection.innerHTML=`<summary>暂停发布 · ${counts.paused} 项（无需日常处理）</summary>`;const holdsBox=document.createElement('section');pausedSection.append(holdsBox);box.append(pausedSection);renderVisibilityHolds(holdsBox,holds);if(holds.error)holdsBox.textContent='暂停活动读取失败：'+holds.error;
   bindLeadTasks(box,q.leadTasks||[]);
@@ -2681,6 +2683,7 @@ async function refreshPage() {
   finally { refreshInFlight = false; }
 }
 setInterval(() => {
+  updateUrgentClocks();
   if (document.hidden || keepPage()) return;
   const now = Date.now();
   $$('[data-end]').forEach(el => { el.textContent = cdText(+el.dataset.end - now); });

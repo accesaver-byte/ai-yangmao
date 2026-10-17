@@ -7,7 +7,7 @@ function fixture(){
  const {window,document}=parseHTML(`<html><body>${readFileSync('web/src/body.html','utf8')}</body></html>`);
  function Clock(...args:unknown[]){return Reflect.construct(Date,args.length?args:['2026-10-12T03:00:00Z']);}Object.setPrototypeOf(Clock,Date);Clock.prototype=Date.prototype;
  const context=createContext({YMMembership,structuredClone,window,document,console,Intl,Date:Clock,Map,Set,URL,URLSearchParams,matchMedia:()=>({matches:false,addEventListener(){}}),getComputedStyle:()=>({getPropertyValue:()=> '#123456'}),localStorage:{getItem:()=>null,setItem(){}},sessionStorage:{getItem:()=>null},MutationObserver:class{observe(){}},setTimeout,clearTimeout,setInterval(){},location:{hash:'#today'},navigator:{}});
- const app=readFileSync('web/src/app.js','utf8');runInContext(readFileSync('web/src/data.js','utf8')+'\n'+readFileSync('web/src/membership.js','utf8')+'\n'+app.slice(0,app.indexOf('(async function boot()')),context);
+ const app=readFileSync('web/src/app.js','utf8');runInContext(readFileSync('web/src/data.js','utf8')+'\n'+readFileSync('web/src/membership.js','utf8')+'\n'+readFileSync('web/src/urgent-review.js','utf8')+'\n'+app.slice(0,app.indexOf('(async function boot()')),context);
  const run=(s:string)=>runInContext(s,context);run("NOW=new Date('2026-10-12T03:00:00Z');T0=new Date(2026,9,12);");return {run,document};
 }
 const campaign=(id:string,extra={})=>({id,t:`${id} Step 5 Preview 免费一周`,ty:'free',ek:'unknown',s:-4,e:null,publishedAt:'2026-10-08T17:34:16Z',vf:-1,tz:'UTC',v:'平台限时免费使用',...extra});

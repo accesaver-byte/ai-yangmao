@@ -10,6 +10,7 @@ import { ScreeningStore } from './store';
 import { confirmAutoClosed, listAutoClosed, markWronglyClosed } from './spot-check';
 import { activeTitleRules, applyRuleToOpenLeads, createIntakeRule, listIntakeRules, retireIntakeRule, RuleError, suggestIntakeRules } from './intake-rules';
 import type { Env } from '../index';
+import { readUrgentReviews, urgentReviewQueue } from './urgent-review';
 
 export const screeningIngestRoutes = new Hono<{ Bindings: Env }>();
 
@@ -152,6 +153,19 @@ function taskSubject(row: QueueRow) {
 }
 
 export const screeningAdminRoutes = new Hono<{ Bindings: Env; Variables: { role: 'admin' | 'reviewer'; who: string } }>();
+
+screeningAdminRoutes.get('/urgent', async c => c.json(await urgentReviewQueue(c.env.DB)));
+screeningAdminRoutes.post('/urgency', async c => {
+  const input = z.object({ key: z.string().max(300), expectedVersion: z.string().length(64), suppressed: z.boolean() }).safeParse(await c.req.json().catch(() => null));
+  if (!input.success) return c.json({ error: '需要当前卡片版本和排序选择' }, 400);
+  const row = (await readUrgentReviews(c.env.DB)).find(row => row.key === input.data.key);
+  if (!row || row.expired || row.version !== input.data.expectedVersion) return c.json({ error: '任务已处理、截止或内容变化，请刷新后重试' }, 409);
+  // 偏好绑定此版本；并发产生的新版本不受旧请求影响。
+  await c.env.DB.prepare(`INSERT INTO review_urgency_preferences(subject_key,subject_version,suppressed,actor,updated_at)
+    VALUES(?,?,?,?,?) ON CONFLICT(subject_key) DO UPDATE SET subject_version=excluded.subject_version,
+    suppressed=excluded.suppressed,actor=excluded.actor,updated_at=excluded.updated_at`).bind(row.key, row.version, Number(input.data.suppressed), c.get('who'), new Date().toISOString()).run();
+  return c.json({ ok: true });
+});
 
 screeningAdminRoutes.get('/profiles/:platformId', async c => {
   const row = await c.env.DB.prepare('SELECT profile_json FROM platform_profiles WHERE platform_id=?').bind(c.req.param('platformId')).first<{ profile_json: string }>();

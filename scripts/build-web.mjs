@@ -13,7 +13,7 @@ const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><met
   + '<script src="/vendor/echarts.min.js"></script><script src="/membership-core.js"></script><script src="/app.js"></script></body></html>\n';
 await writeFile('public/index.html', html);
 await build({ entryPoints: ['src/shared/membership.ts'], bundle: true, format: 'iife', globalName: 'YMMembership', platform: 'browser', outfile: 'public/membership-core.js' });
-await writeFile('public/app.js', (await Promise.all(['data', 'membership', 'app'].map(name => readFile(`web/src/${name}.js`, 'utf8')))).join('\n'));
+await writeFile('public/app.js', (await Promise.all(['data', 'membership', 'urgent-review', 'app'].map(name => readFile(`web/src/${name}.js`, 'utf8')))).join('\n'));
 await Promise.all([
   copyFile('node_modules/echarts/dist/echarts.min.js', 'public/vendor/echarts.min.js'),
   copyFile('web/_headers', 'public/_headers'),
