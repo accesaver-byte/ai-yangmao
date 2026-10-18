@@ -11,6 +11,8 @@ permissions:
 
 jobs:
   distill:
+    if: github.repository == 'accesaver-byte/ai-yangmao' && github.ref == 'refs/heads/main'
+    environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

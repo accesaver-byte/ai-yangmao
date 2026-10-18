@@ -49,12 +49,19 @@ concurrency:
   group: collect
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   collect:
+    if: github.repository == 'accesaver-byte/ai-yangmao' && github.ref == 'refs/heads/main'
+    environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24

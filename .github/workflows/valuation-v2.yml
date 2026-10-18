@@ -9,12 +9,19 @@ on:
 concurrency:
   group: valuation-v2-evaluate
   cancel-in-progress: false
+permissions:
+  contents: read
+
 jobs:
   evaluate:
+    if: github.repository == 'accesaver-byte/ai-yangmao' && github.ref == 'refs/heads/main'
+    environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24

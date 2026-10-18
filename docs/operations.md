@@ -32,6 +32,18 @@ npx tsx .claude/skills/yangmao-review/scripts/offer.ts plan <短码> patch.json
 
 条目页「✏️ 在线编辑」（2026-10-18）：本浏览器已用管理员或审核员密钥登录时显示，复用审核卡片的编辑表单，经 `GET/POST /api/admin/offers/:ref(/edit)` 按审核版本保存，字段合同、会员目录与上架检查照常；身份管理的条目保存为待发布修改，须在同一面板按新版本点“通过”才公开，审核员同样不能下架或标亲测。以`src/worker/admin.ts`的`REVIEWER_ALLOWED`为准。`REVIEWER_TOKENS`使用name:token列表，令牌至少16字符。角色能力不扩大本次任务授权。平台准入不等于条目批准；`reject`对已上架条目持久保存被拒证据后移除更新提案，误收条目用`unpublish`，官方明确撤回用`withdraw`并保存官方链接及理由。
 
+## GitHub 协作与 Actions 凭据保护
+
+`main` 的 `protect-main` 规则要求 PR、至少 1 个批准、代码所有者审核和 `check` 检查通过；新提交会撤销旧批准，审核讨论必须解决。`.github/CODEOWNERS` 将全部文件（包括它自身及工作流）指定给 `@accesaver-byte`。另设主分支更新限制，仅仓库所有者可通过 PR 合并；协作者不能直接推送或自行合并，部署密钥和 GitHub App 不再豁免。所有者自己发起的 PR 无法自我批准，须由所有者主动选择 PR 豁免合并；普通协作者没有此权限。
+
+采集、纠正归纳及两项真实模型回归共用 `production` Environment：仅允许 `main` 分支，唯一审批人为 `accesaver-byte`，禁止管理员跳过环境审批。允许所有者批准自己启动的任务，否则唯一审批人无法手动补跑。敏感凭据仅保存在环境 Secrets，仓库级同名副本必须为空；增加新凭据时也遵循此规则，不能放回仓库级 Secrets。
+
+**包括定时采集在内，每次敏感任务都会等待所有者在 Actions → 对应运行 → Review deployments 中批准 `production`，批准前不会运行作业或取用环境密钥。** 不批准时不会自动采集；此配置以人工审批优先，不能把等待审批当作采集成功。代码 PR 审核与任务运行审批是两个独立步骤。
+
+普通 PR 的 `check` 不使用生产环境或生产凭据。默认 `GITHUB_TOKEN` 仅只读；纠正归纳为创建规则建议 PR 显式申请 contents/pull-requests 写权限。GitHub Actions 创建/批准 PR 的仓库开关保留开启以支持该功能，但机器人不在 CODEOWNERS 或主分支更新豁免名单，不能代替所有者批准或合并。
+
+手动验收运行 `verify-credential-protection.yml`：它只检查 8 项环境 Secrets 是否非空，不调用模型、不写业务数据、不输出凭据。审批前应显示等待 `accesaver-byte`；从非 `main` 分支运行时应被环境分支策略阻止。
+
 ## 调度与线索到审核
 
 | 执行方 | 时间基准与调度 | 工作 |
