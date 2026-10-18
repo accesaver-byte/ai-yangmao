@@ -46,6 +46,8 @@ npx tsx .claude/skills/yangmao-review/scripts/offer.ts plan <短码> patch.json
 
 ## 调度与线索到审核
 
+**AIHOT Codex reset（2026-10-18管理员授权）**：`aihot-resets` 可启用专用自动上架，采集器使用 AIHOT 提供的 X 员工原帖链接作证据，跳过模型研判排队并走既有身份去重与版本化批准；其他线索源仍按原规则。主公告上下文修复、开关、续传及发布凭证见 [专项说明](aihot-reset-auto-publish-2026-10-18.md)。
+
 | 执行方 | 时间基准与调度 | 工作 |
 |---|---|---|
 | Worker | UTC 00:00每日 | 配置了webhook时发飞书日报 |

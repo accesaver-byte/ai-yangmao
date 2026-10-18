@@ -3,7 +3,7 @@ import type { LeadResolution } from '../../shared/lead-review';
 import { sha256,stableJson } from '../../shared/identity/normalize';
 import { MutationBuilder,commitIdentityMutation } from './commit';
 import { IdentityError } from './store';
-export async function aggregateIdentityLead(db:D1Database,leadId:number,forceReview=false):Promise<{status:string;offerIds:string[];taskIds:string[];deferredIds:string[]}|null> {
+export async function aggregateIdentityLead(db:D1Database,leadId:number,forceReview=false,options:{preserveRejected?:boolean}={}):Promise<{status:string;offerIds:string[];taskIds:string[];deferredIds:string[]}|null> {
  const rows=await db.prepare(`WITH RECURSIVE linked AS (
  SELECT c.id,c.state,c.revision,c.receipt_json,c.entity_id,c.task_id FROM lead_candidate_links l JOIN intake_candidates c ON c.id=l.candidate_id WHERE l.lead_id=? ORDER BY c.id LIMIT 101
  ), task_routes(candidate_id,task_id) AS (
@@ -16,6 +16,7 @@ export async function aggregateIdentityLead(db:D1Database,leadId:number,forceRev
  if(!rows.results.length&&!extractions.results.length)return null;
  const lead=await db.prepare('SELECT status,resolution,offer_id FROM leads WHERE id=?').bind(leadId).first<{status:string;resolution:string|null;offer_id:string|null}>();
  if(!lead)throw new IdentityError(404,'lead not found');
+ if(options.preserveRejected&&lead.status==='rejected')return {status:'rejected',offerIds:[],taskIds:[],deferredIds:[]};
  const all=rows.results;
  const originOfferIds=[...new Set(all.flatMap(r=>r.canonical_offer_id?[r.canonical_offer_id]:[]))];
  const routing=await canonicalOfferMap(db,originOfferIds),offerIds=[...new Set(originOfferIds.map(id=>routing.get(id)?.offerId??id))];

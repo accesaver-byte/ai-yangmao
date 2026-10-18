@@ -1,3 +1,4 @@
+import {publishAiHotResets} from './aihot-resets';
 import {collectDiscord} from './discord';
 import {fetchedSource} from './fetch-evidence';
 import type {FetchedPage} from './lib';
@@ -235,7 +236,17 @@ async function runSource(src: Source) {
   log(`[${src.id}] ${src.kind} ${src.url}`);
   try {
     const fetchedLeads=async(leads:LeadIn[])=>{noteSourceFetched(src);await postLeads(leads);await report(src,true);};
-    if (src.kind === 'aihot') await fetchedLeads(await aihot(src));
+    if (src.kind === 'aihot') {
+      const publishReset=async(leads:LeadIn[],resume:boolean)=>{
+        const reset=await publishAiHotResets(src,leads,{dry:DRY,log,resume,canContinue:()=>Date.now()<deadline});
+        if(reset.published||reset.manual||reset.failed)log('AIHOT 重置自动上架',reset);
+        if(reset.failed){src.deferThisRun=true;stats.deferred+=reset.failed;stats.errors.push(...reset.errors);}
+      };
+      await publishReset([],true); // 已绑定的官方候选不依赖 AIHOT 上游此刻可用。
+      const leads=await aihot(src);
+      await fetchedLeads(leads);
+      await publishReset(leads,false);
+    }
     else if (src.kind === 'hn') await fetchedLeads(await hn(src));
     else if (src.kind === 'reddit') await fetchedLeads(await reddit(src));
     else if (src.kind === 'feed') await fetchedLeads(await feed(src));

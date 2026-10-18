@@ -1,3 +1,4 @@
+import {AIHOT_RESET_SOURCE,AIHOT_RESET_URL} from '../shared/aihot-reset';
 import { parseDiscordChannelLink, registerDiscordPublisher, unmappedDiscordOrigins } from './discord-publishers';
 import { learnWechatAccount } from './wechat-accounts';
 import type {MembershipRequirement} from '../shared/membership';
@@ -627,7 +628,8 @@ admin.post('/sources/:id/auto-publish', async c => {
   if (!source) return c.json({ error: '没有这个信源' }, 404);
   if (on) {
     const [platform] = source.platformId ? await db(c.env).select().from(s.platforms).where(eq(s.platforms.id, source.platformId)) : [];
-    if (!source.enabled || source.cleanStreak < 5 || !['site', 'docs', 'official'].includes(source.tier) || platform?.status !== 'approved')
+    const aiHotResetPolicy=source.id===AIHOT_RESET_SOURCE&&source.kind==='aihot'&&source.url===AIHOT_RESET_URL&&source.enabled;
+    if (!aiHotResetPolicy && (!source.enabled || source.cleanStreak < 5 || !['site', 'docs', 'official'].includes(source.tier) || platform?.status !== 'approved'))
       return c.json({ error: '信源尚未满足五条原样通过、平台准入和官方等级门槛' }, 400);
   }
   await db(c.env).update(s.sources).set({ autoPublish: !!on }).where(eq(s.sources.id, c.req.param('id')));

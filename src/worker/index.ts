@@ -1,3 +1,4 @@
+import {aiHotResetRoutes} from './aihot-resets';
 import { sourceUnhealthy } from '../shared/source-health';
 import {readCollectionStatus} from './collection-status';
 import { commentRoutes } from './comments';
@@ -234,6 +235,7 @@ ingest.use('*', async (c, next) => {
 });
 
 ingest.route('/', identityIngestRoutes);
+ingest.route('/aihot-resets',aiHotResetRoutes);
 ingest.route('/screening', screeningIngestRoutes);
 ingest.route('/official-reviews', officialReviewRoutes);
 ingest.route('/lead-reviews', leadReviewRoutes);

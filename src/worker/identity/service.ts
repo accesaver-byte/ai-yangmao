@@ -22,7 +22,7 @@ import { decisionApplies,evaluateReopen,reviewTaskKey } from '../../shared/ident
 import { claimIdentityKey,hashTerms,sha256,stableJson } from '../../shared/identity/normalize';
 import { IdentityStore,IdentityError,readReviewDecision } from './store';
 import { findPerkGroup } from './perk-group';
-import { MutationBuilder,commitIdentityMutation,readIdentityReceipt,type Binding,type ExpectedRevision } from './commit';
+import { MutationBuilder,commitIdentityMutation,readIdentityReceipt,type Binding,type ExpectedRevision,type Predicate } from './commit';
 type OfferRow=typeof tables.offers.$inferSelect;
 type CandidateRow={id:string;observation_id:string;facts_json:string;facts_hash:string;raw_candidate_json:string;receipt_json:string|null;revision:number;entity_id:string|null;state:string;task_id:string|null;last_error:string|null;claim_family_key:string|null;assertion_facts_hash:string|null;source_fetch_id:string|null};
 type EntityRow={routing_generation?:number;id:string;platform_id:string;canonical_offer_id:string|null;business_revision:number;publication_revision:number;current_approved_version_id:string|null};
@@ -589,7 +589,7 @@ export class IdentityService {
   return this.commit(builder,expected,receipt);
  }
 
- async decideTask(taskId:string,raw:TaskDecisionInput):Promise<{decisionId:string;publicationRevision:number}> {
+ async decideTask(taskId:string,raw:TaskDecisionInput,publicationGuard?:Predicate):Promise<{decisionId:string;publicationRevision:number}> {
   const input=decisionInput.parse(raw),hash=await sha256(stableJson({taskId,...input})),command='decide:'+input.requestId;
   const previous=await readIdentityReceipt<{decisionId:string;publicationRevision:number}>(this.db,command,hash);if(previous){if(previous.status==='conflict')throw new IdentityError(409,'request payload conflict');return previous.value!;}
   if(input.role!=='admin'&&input.scope?.kind==='scoped_mechanism')throw new IdentityError(403,'scope expansion requires administrator');
@@ -655,6 +655,7 @@ export class IdentityService {
    const revision=(await this.db.prepare('SELECT revision FROM identity_blocks WHERE block_key=?').bind(block).first<{revision:number}>())?.revision??0;
    expected.push({kind:'block',id:block,revision});builder.insert('identity_blocks',{block_key:block,revision},'nothing');builder.update('identity_blocks',{revision:revision+1},'block_key=?',[block]);
   }
+  if(input.action==='approve'&&publicationGuard)builder.require(publicationGuard.sql,publicationGuard.args);
   const decisionId=crypto.randomUUID(),publicationRevision=entity.publication_revision+(input.action==='approve'?1:0);
   if(original)builder.require('EXISTS(SELECT 1 FROM offers WHERE id=? AND updated_at=?)',[original.id,original.updatedAt]);
   const priorRefusal=await this.db.prepare("SELECT d.id FROM review_decisions d WHERE entity_id=? AND (version_id=? OR json_extract(scope_json,'$.kind')='entity_alias') AND action='reject' AND NOT EXISTS(SELECT 1 FROM review_decisions later WHERE later.supersedes_id=d.id) ORDER BY created_at DESC LIMIT 2").bind(entity.id,task.version_id).all<{id:string}>();
