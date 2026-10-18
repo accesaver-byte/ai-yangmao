@@ -16,7 +16,7 @@ import { officialTier } from '../src/shared/official-review';
 // 采集管线入口：GitHub Actions 每 6 小时运行一次，也可以手动触发补跑。
 // 流程：取信源 → 抓取 → 只保留和羊毛相关的句子 → 与上次比对 → 有变化才调用模型抽取 → 写入网站（默认进待审）。
 import { aihot, feed, hn, parseFeed, reddit, type Source } from './collectors';
-import { api, approvedTermsStillPresent, fetchPage, fetchText, isFreebie, LEAD_POST_CHUNK, newRelevantLines, norm, relevantText, sha256 } from './lib';
+import { api, approvedTermsStillPresent, fetchPage, officialLinkedUrls, fetchText, isFreebie, LEAD_POST_CHUNK, newRelevantLines, norm, relevantText, sha256 } from './lib';
 import { DeferError, extract, llmAvailable, modelAvailable, paidAvailable, type Extracted } from './llm';
 import { BudgetExhaustedError, BudgetLedgerError, modelBudget } from './budget';
 import { offerIn, type LeadIn, type OfferIn } from '../src/shared/ingest';
@@ -362,7 +362,7 @@ async function triageLeads(plats: Plat[]) {
     stats.leadsTriaged++;
     let evidenceText = l.raw ?? '';
     let text = `线索标题（转述，仅用于定位）：${l.title ?? ''}\n${evidenceText}`;
-    let fetched = false;
+    let fetched = false, linkedReadFailed = false;
     let effectiveUrl = l.url, indirect = false;let fetchedPage:FetchedPage|undefined;
     try {
       const pg = await fetchPage(l.url, { timeoutMs: 10000, tries: 1 });fetchedPage=pg;
@@ -371,12 +371,28 @@ async function triageLeads(plats: Plat[]) {
       effectiveUrl = pg.finalUrl; indirect = pg.via === 'jina'; fetched = true;
     }
     catch { /* 补录失败也研判已有备注为媒体级草稿；不能让失效链接永远占据 new 队首。 */ }
+    // AIHOT may already carry the full product URL; an X preview may reveal it even when the post only says “Try it”.
+    // Read the destination as a separate source so its quotes and provenance never become tweet text.
+    const navigationText=`${l.title??''}\n${l.raw??''}`;
+    const originOwners=plats.filter(p=>officialTier(l.url,p,[]));
+    const officialOpenRouterLead=officialStatusKey(l.url)?.startsWith('x.com/openrouter/status/')===true&&originOwners.some(p=>officialTier(l.url,p,[])==='official');
+    const linkOwners=originOwners.length?originOwners:plats.filter(p=>platformMentioned(navigationText,p));
+    for(const url of officialLinkedUrls(l.url,navigationText,fetchedPage,plats)){
+      try{
+        const linked=await fetchPage(url,{timeoutMs:10000,tries:1,minimumTextLength:100});
+        if(!linkOwners.some(p=>officialTier(linked.finalUrl,p,[]))||linked.sourceVerified===false){linkedReadFailed=true;continue;}
+        if(!isFreebie(linked.text))continue;
+        fetchedPage=linked;evidenceText=linked.text.slice(0,14000);
+        text=`线索标题（转述，仅用于定位）：${l.title??''}\n${evidenceText}`;
+        effectiveUrl=linked.finalUrl;indirect=linked.via==='jina';fetched=true;break;
+      }catch{linkedReadFailed=true;}
+    }
     let r;
     // 只附线索提到的平台的已有条目：整份索引（400+ 条、约 5 万字）每次都发，单次提示词 6–8 万 token，
     // Gemini 免费档两次就 429，DeepSeek 每次约 ¥0.2（2026-10-15）。跨平台重复仍由服务端身份去重兜底。
     const mentioned = mentionedPlatforms(`${l.title ?? ''}\n${text}`);
     const scopedExisting = formatOfferIndex(known.filter(k => mentioned.includes(k.platformId))) || undefined;
-    try { r = await extract('（见平台白名单）', l.url, text, log, { allowPaid, evidenceText, deadlineAt: triageDeadline, platformList: list, platformIds: mentioned, profiles: await screeningProfiles(), existing: scopedExisting, corrections: await correctionsFor(null, null), budget: modelBudget }); }
+    try { r = await extract('（见平台白名单）', effectiveUrl, text, log, { allowPaid, evidenceText, deadlineAt: triageDeadline, platformList: list, platformIds: mentioned, profiles: await screeningProfiles(), existing: scopedExisting, corrections: await correctionsFor(null, null), budget: modelBudget }); }
     catch (e) {
       log(`  #${l.id} 抽取失败：${(e as Error).message.slice(0, 80)}`);
       if (budgetFailure(e)) { budgetBlocked = true; stats.deferred++; break; }
@@ -449,7 +465,7 @@ async function triageLeads(plats: Plat[]) {
         await api(`/leads/${l.id}/status`, { status: 'linked', offerId: saved[0].id });
       }
     } else {
-      await api(`/leads/${l.id}/status`, { status: invalidCount || unknown.length || !fetched || leadPriority(l) <= 1 ? 'reviewing' : 'rejected', note: invalidCount ? '抽取字段不合规，保留线索等待人工补齐' : unknown.length ? `白名单外的平台：${unknown.join('、')}` : !fetched ? '原文抓取失败，仅有转述，等待人工核验' : leadPriority(l) <= 1 ? '重要福利线索未抽取出条目，等待人工核验，不能仅因模型漏抽拒绝' : '模型判断不是 AI 羊毛' });
+      await api(`/leads/${l.id}/status`, { status: invalidCount || unknown.length || !fetched || linkedReadFailed || officialOpenRouterLead || leadPriority(l) <= 1 ? 'reviewing' : 'rejected', note: invalidCount ? '抽取字段不合规，保留线索等待人工补齐' : unknown.length ? `白名单外的平台：${unknown.join('、')}` : linkedReadFailed ? '官方关联页面读取受阻，保留线索等待补证' : officialOpenRouterLead ? 'OpenRouter 官方线索未抽取出条目，保留待审并交官方复核；模型漏抽不构成否定证据' : !fetched ? '原文抓取失败，仅有转述，等待人工核验' : leadPriority(l) <= 1 ? '重要福利线索未抽取出条目，等待人工核验，不能仅因模型漏抽拒绝' : '模型判断不是 AI 羊毛' });
     }
   }
 }

@@ -1,5 +1,5 @@
 import { postIdentityOffers } from './identity-client';
-import {api,fetchPage,relevantText} from './lib';
+import {api,fetchPage,officialLinkedUrls,relevantText} from './lib';
 import {extract,modelAvailable,DeferError} from './llm';
 import {modelBudget,BudgetExhaustedError,BudgetLedgerError} from './budget';
 import {searchOfficial} from './official-review';
@@ -37,7 +37,10 @@ export async function runLeadReviews(options:LeadReviewOptions){
       wechatOnly=/^https?:\/\/mp\.weixin\.qq\.com\//i.test(lead.url)&&!primaryOwners.length;
       const identified=primaryOwners.length?primaryOwners:platforms.filter(p=>platformMentioned(targetText,p)).slice(0,4);
       const {corrections}=await api<{corrections:string[]}>('/corrections?limit=10');
-      const urls=[lead.url,...(targetText.match(/https?:\/\/[^\s<>"）)]+/g)??[])];
+      const linkedUrls=officialLinkedUrls(lead.url,targetText,undefined,platforms,sources);
+      const urls=[lead.url,...linkedUrls];
+      let hasLinkedEvidence=linkedUrls.length>0;
+      let pendingClosure:{reason:string;evidenceUrl:string;quote?:string;sourceText:string}|undefined;
       const processed=new Set<string>();
       const previous=new Set((job.previousCandidates??[]).map(normUrl));
       // 首先读原文，再按目标搜索，避免只靠转述标题或搜索摘要下结论。
@@ -58,9 +61,10 @@ export async function runLeadReviews(options:LeadReviewOptions){
           }else{technical=true;reasons.push('搜索服务本轮冷却，保留已知来源核验');}
           urls.push(...identified.flatMap(p=>sources.filter(s=>s.platformId===p.id&&['docs','site','official'].includes(s.tier)).map(s=>s.url)));
         }
-        const ordered=phase===0?[lead.url]:[...urls.filter(u=>!previous.has(normUrl(u))),...urls.filter(u=>previous.has(normUrl(u)))];
+        const ordered=phase===0?[...urls]:[...urls.filter(u=>!previous.has(normUrl(u))),...urls.filter(u=>previous.has(normUrl(u)))];
         for(const url of ordered){
-          if(processed.has(normUrl(url))||candidates.length>=3)continue;
+          if(processed.has(normUrl(url)))continue;
+          if(candidates.length>=6){if(authority(url).length)technical=true;continue;}
           const owners=authority(url);
           if(!owners.length)continue;
           if(!options.canContinue()||Date.now()>=deadlineAt)throw new DeferError('本轮复核时间或模型预算不足');
@@ -71,6 +75,11 @@ export async function runLeadReviews(options:LeadReviewOptions){
           const owner=owners.find(p=>officialTier(page.finalUrl,p,sources.filter(s=>s.platformId===p.id)));
           if(!owner||(page.via==='jina'&&!page.sourceVerified)){technical=true;reasons.push('正文来源无法确认：'+url);continue;}
           readable++;
+          // Expanded X links are navigation, not quoted tweet content. Process them before a negative assessment can close the lead.
+          for(const linked of officialLinkedUrls(lead.url,targetText,page,platforms,sources)){
+            hasLinkedEvidence=true;
+            if(!urls.some(u=>normUrl(u)===normUrl(linked))){urls.push(linked);ordered.push(linked);}
+          }
           const result=await extract(owner.name,page.finalUrl,page.text.slice(0,22000),options.log,{allowPaid:options.allowPaid,deadlineAt,budget:modelBudget,
             evidenceText:page.text,platformIds:[owner.id],platformList:platforms.map(p=>p.id+'='+p.name).join('；'),existing:job.existing.filter(o=>o.platformId===owner.id).map(existingLine).join('\n'),corrections,leadTarget:JSON.stringify({title:lead.title,originUrl:lead.url,summary:targetText.slice(0,2500)})});
           options.account(result.tokens,result.costCny);
@@ -115,10 +124,13 @@ export async function runLeadReviews(options:LeadReviewOptions){
             }
             // 仅原始官方帖可直接认定“无独立福利”，相关搜索页没有提及不能证明原线索无效。
             if(!hadInvalid&&!offerIds.length&&a.outcome==='not_benefit'&&normUrl(page.finalUrl)===normUrl(lead.url)){
-              outcome='closed';reason=a.reason;evidenceUrl=page.finalUrl;quote=a.quote;sourceText=page.text.slice(0,250000);break;
+              pendingClosure={reason:a.reason,evidenceUrl:page.finalUrl,quote:a.quote,sourceText:page.text.slice(0,250000)};
             }
             reasons.push(a.reason);
           }else reasons.push('官方正文未形成可应用条目，需核对是否预告、进度或已有活动');
+        }
+        if(pendingClosure&&!hasLinkedEvidence&&!technical&&!hadInvalid&&!offerIds.length){
+          outcome='closed';({reason,evidenceUrl,quote,sourceText}=pendingClosure);
         }
       }
       if(outcome!=='linked'&&outcome!=='closed'){

@@ -262,3 +262,9 @@ Worker 的规则比较器在入库时已自动结案约 95% 候选（重复已�
 公开快照必须只含已批准字段，由`scripts/build-public-snapshot.ts <受限备份.sqlite> <快照ISO时间> public/public-snapshot.json`生成并随静态资源部署；每次部署保留或更新该资产，原始数据库备份不得上传。`D1_PUBLIC_SNAPSHOT_UNTIL`设置未来时间时，公开启动接口走快照，后台和采集返回只读503，定时任务暂停；期限后重试数据库。明确的D1额度错误也会触发快照退路。
 
 `D1_REPAIR_RELATED_INDEXES=1`使恢复后的调度先幂等创建reviews(offer_id)、leads(offer_id)索引，再执行原任务；0038迁移登记相同索引。不得为节省读取消除身份回填的快照并发保护。判断额度异常先用Cloudflare分析接口取得日/小时/查询热点，避免继续消耗D1；不同adaptive数据集不能算精确占比。当前应急部署与尚待验证事项见[D1恢复凭证](d1-quota-recovery-2026-10-11.md)。
+
+### 官方短帖补证与误关恢复
+
+OpenRouter 官方上线公告的 Try it 短链、展开链接与卡片按 [专项规则](openrouter-evidence-recovery-2026-10-18.md)处理。X 原文与导航元数据分开，落地页证据绑定其自身 URL。仅缺额度描述或模型空输出不能关闭该官方线索。
+
+后台“自动关闭抽查”的“误关”按钮会恢复审核；旧 wrong 但未恢复的线索同样列出。`POST /api/admin/screening/spot-check/:id/wrong` 接收列表的 `expectedVersion`；返回 `more=true` 时用返回的新版本继续，`recovery.state=completed` 才表示恢复完成，不能把恢复当上架。已关闭拒绝记录仍在，恢复决定取代旧拒绝，负面学习不再使用已纠正/已被取代的记录。该操作仅管理员可用，仍保留版本和每请求查询预算。

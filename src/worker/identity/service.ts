@@ -1,3 +1,4 @@
+import {assertOfficialLeadRejection} from '../official-lead-policy';
 import {prepareMembershipFields,MembershipError} from '../membership';
 import {membershipFacts} from '../../shared/membership';
 import {withMembershipFacts,membershipFactConsistent} from '../../shared/identity/membership';
@@ -302,6 +303,8 @@ export class IdentityService {
   if(input.scope&&input.scope.kind!=='claim'&&input.scope.kind!=='observation_only')throw new IdentityError(403,'unresolved claims require a narrow refusal scope');
   const rows=await this.db.prepare('SELECT c.* FROM task_candidates tc JOIN intake_candidates c ON c.id=tc.candidate_id WHERE tc.task_id=? AND c.task_id=tc.task_id ORDER BY c.id LIMIT 11').bind(task.id).all<CandidateRow>();
   if(!rows.results.length||rows.results.length>10)throw new IdentityError(409,'claim group requires an explicit bounded selection');
+  const rejectionSources=await this.db.prepare('SELECT final_url,text FROM source_observations WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify([...new Set(rows.results.map(row=>row.observation_id))])).all<{final_url:string;text:string}>();
+  for(const source of rejectionSources.results)await assertOfficialLeadRejection(this.db,{url:source.final_url,text:source.text,reason:input.reason,reasonCode:input.reasonCode});
   const builder=new MutationBuilder(this.db,command,hash);let firstDecision='';
   for(const candidate of rows.results){
    if(input.scope?.kind==='claim'&&input.scope.candidateId!==candidate.id)throw new IdentityError(400,'foreign claim scope');
@@ -595,6 +598,11 @@ export class IdentityService {
   if(input.role!=='admin'&&input.scope?.kind==='scoped_mechanism')throw new IdentityError(403,'scope expansion requires administrator');
   const task=await this.db.prepare('SELECT * FROM review_tasks WHERE id=?').bind(taskId).first<TaskRow>();
   if(!task||task.revision!==input.expectedRevision||!['open','checking','manual'].includes(task.state))throw new IdentityError(409,'task revision changed');
+  if(input.action==='reject'&&['initial','evidence_reopen','terms_change'].includes(task.kind)){
+   const origins=await this.db.prepare(taskSourcesCte+" SELECT DISTINCT l.url,l.raw,l.title FROM task_candidates tc JOIN lead_candidate_links lc ON lc.candidate_id=tc.candidate_id JOIN leads l ON l.id=lc.lead_id WHERE tc.task_id IN (SELECT id FROM task_sources) LIMIT 11").bind(taskId).all<{url:string;raw:string|null;title:string|null}>();
+   if(origins.results.length>10)throw new IdentityError(409,'official lead origin set requires bounded review');
+   for(const origin of origins.results)await assertOfficialLeadRejection(this.db,{url:origin.url,text:origin.raw??origin.title??'',reason:input.reason,reasonCode:input.reasonCode});
+  }
   if(input.action==='reject'&&!task.entity_id)return this.rejectClaimTask(task,input,command,hash);
   if(!['initial','terms_change','evidence_reopen'].includes(task.kind))throw new IdentityError(400,'identity conflict requires explicit identity resolution');
   if(!task.entity_id||!task.version_id)throw new IdentityError(400,'identity must be resolved before a publication decision');

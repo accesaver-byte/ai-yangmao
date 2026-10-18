@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import { assertSafeUrl, fetchPublic, UnsafeTargetError } from './safe-fetch';
-import { officialStatusKey } from '../src/shared/dedupe';
+import { officialStatusKey, normUrl } from '../src/shared/dedupe';
+import {officialTier,type OfficialPlatform,type OfficialSource} from '../src/shared/official-review';
+import {platformMentioned} from '../src/shared/lead-scope';
 
 export const UA = 'Mozilla/5.0 (compatible; ai-yangmao-bot/0.1; +https://ai-yangmao.com)';
 /**
@@ -81,13 +83,46 @@ export function syndicatedPostText(url:string,payload:unknown):string|null {
   return `@${post.user.screen_name}\n${typeof post.created_at==='string'?post.created_at+'\n':''}${post.text}`;
 }
 
+/** Embed previews are navigation metadata, never appended to the quoted post body. */
+export interface OutboundLink {url:string;title?:string}
+export function syndicatedPostLinks(url:string,payload:unknown):OutboundLink[] {
+  if(!syndicatedPostText(url,payload))return [];
+  const post=payload as {entities?:{urls?:{expanded_url?:unknown}[]};card?:{binding_values?:Record<string,{string_value?:unknown}>}};
+  const values=post.card?.binding_values;
+  const title=typeof values?.title?.string_value==='string'?values.title.string_value:undefined;
+  const links=[...(Array.isArray(post.entities?.urls)?post.entities.urls:[]).map(link=>link?.expanded_url),values?.card_url?.string_value];
+  const result:OutboundLink[]=[];
+  for(const value of links){
+    if(typeof value!=='string')continue;
+    try{const target=assertSafeUrl(value).href;if(!result.some(link=>link.url===target))result.push({url:target});}catch{/* Unsafe preview links are not navigation targets. */}
+  }
+  if(title&&result.length===1)result[0].title=title;
+  return result;
+}
+
+/** Only admitted URLs belonging to the originating/identified issuer may be followed. */
+export function officialLinkedUrls(originUrl:string,raw:string,page:FetchedPage|undefined,platforms:OfficialPlatform[],sources:OfficialSource[]=[]):string[] {
+  const originOwners=platforms.filter(p=>officialTier(originUrl,p,sources.filter(s=>s.platformId===p.id)));
+  const owners=originOwners.length?originOwners:platforms.filter(p=>platformMentioned(raw,p));
+  const links=[...(page?.outboundLinks??[]).map(link=>link.url),...(raw.match(/https?:\/\/[^\s<>"）)]+/g)??[])];
+  const found=new Map<string,string>();
+  for(const value of links){
+    try{
+      const url=assertSafeUrl(value.replace(/[.,;，。；\]]+$/,'')).href,key=normUrl(url);
+      if(key===normUrl(originUrl)||!owners.some(p=>officialTier(url,p,sources.filter(s=>s.platformId===p.id))))continue;
+      found.set(key,url);
+    }catch{/* Invalid/private links cannot inherit the issuer's authority. */}
+  }
+  return [...found.values()].slice(0,3);
+}
+
 /**
  * 抓官方页面正文，三层兜底：
  * 1. 直接抓取，Readability 正文和整页纯文本里，取羊毛相关内容更多的那个（Readability 有时会丢掉定价说明）；
  * 2. 字数仍然太少（多半是脚本渲染的页面），改用 Jina Reader，要 Markdown 格式以保留表格结构。
  */
 /** via 表示读取方式类别：jina 指第三方阅读器（含 Exa），一律按间接来源处理；fetchMethod 记录实际读取方。 */
-export interface FetchedPage {sourceVerified?:boolean;text:string;via:'readability'|'direct'|'jina';originalUrl?:string;finalUrl:string;fetchedUrl?:string;fetchMethod?:'direct'|'readability'|'jina'|'exa'|'first_party_embed';truncated?:boolean}
+export interface FetchedPage {outboundLinks?:OutboundLink[];sourceVerified?:boolean;text:string;via:'readability'|'direct'|'jina';originalUrl?:string;finalUrl:string;fetchedUrl?:string;fetchMethod?:'direct'|'readability'|'jina'|'exa'|'first_party_embed';truncated?:boolean}
 // 微信对自动访问返回的拦截页有多种：“环境异常 / 去验证”验证页，以及只有页面框架的“微信扫一扫可打开此内容，使用完整服务”（2026-10-16 CodeBuddy 公告）。
 const WECHAT_BLOCKED = /环境异常|完成验证后即可继续访问|去验证|微信扫一扫可打开此内容|使用完整服务/;
 /** 公众号页面是拦截页而不是正文。不按字数判断：补偿公告这类真文章可能只有三百来字。 */
@@ -118,9 +153,10 @@ export async function fetchPage(url: string, opts: { timeoutMs?: number; tries?:
     try{
       const response=await fetchTextWithUrl(fetchedUrl,{...opts,tries:1,accept:'application/json'});
       if(new URL(response.finalUrl).origin!=='https://cdn.syndication.twimg.com')throw new Error('Unexpected embed host');
-      const text=syndicatedPostText(url,JSON.parse(response.text));
+      const payload:unknown=JSON.parse(response.text);
+      const text=syndicatedPostText(url,payload);
       // finalUrl is the verified canonical post; fetchedUrl records the physical first-party reader.
-      if(text)return {text,via:'direct',originalUrl:url,finalUrl:url,fetchedUrl:response.finalUrl,fetchMethod:'first_party_embed',truncated:false,sourceVerified:true};
+      if(text)return {text,via:'direct',originalUrl:url,finalUrl:url,fetchedUrl:response.finalUrl,fetchMethod:'first_party_embed',truncated:false,sourceVerified:true,outboundLinks:syndicatedPostLinks(url,payload)};
     }catch{/* Failed/mismatched embed is not evidence; continue through the normal readers. */}
   }
   let text = '', via: 'readability' | 'direct' = 'direct', finalUrl = url;
@@ -130,7 +166,7 @@ export async function fetchPage(url: string, opts: { timeoutMs?: number; tries?:
     const full = htmlToText(html), read = readableText(html, url);
     // 哪个版本保留的羊毛相关内容多就用哪个；一样多时用更干净的 Readability
     if (read.length >= 800 && relevantText(read).length >= relevantText(full).length) { text = read; via = 'readability'; } else text = full;
-  } catch { /* 直接抓失败就走 Jina */ }
+  } catch(e) { if(e instanceof UnsafeTargetError)throw e; /* 直接抓失败就走 Jina */ }
   if (text.length >= (opts.minimumTextLength ?? 800) && !(isWechat(url) && wechatBlocked(text))) return { text, via, originalUrl:url,finalUrl,fetchedUrl:finalUrl,fetchMethod:via,truncated:false,sourceVerified:true };
   // 微信公众号文章：云端直读与 Jina 都会遇到验证页（“环境异常”），改用 Exa 从其服务器读取正文（2026-10-16）。
   if (isWechat(url)) { const exa = await exaContents(url, opts.timeoutMs ?? 30000); if (exa) return exa; }

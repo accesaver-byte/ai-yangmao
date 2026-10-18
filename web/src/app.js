@@ -2339,31 +2339,47 @@ async function loadSpotCheck(body) {
   body.textContent = '正在读取…';
   let data; try { data = await adm('/screening/spot-check?days=7'); } catch (e) { body.textContent = '读取失败：' + e.message; return; }
   body.className = 'small';
-  const row = it => `<div data-spot="${it.id}" class="row" style="gap:6px;flex-wrap:wrap;align-items:center;padding:4px 0;border-bottom:1px solid var(--line,#333)"><a href="${esc(it.url)}" target="_blank" rel="noopener" style="flex:1;min-width:220px">${esc(it.title)}</a><span class="muted">${esc(it.origin)} · ${it.closedBy === 'rule' ? '入口规则' : '自动研判'}：${esc(it.reason.slice(0, 40))}</span><select data-spot-cat>${SPOT_CATS.map(k => `<option value="${k}" ${k === it.category ? 'selected' : ''}>${esc(REASON_LABEL[k] || k)}</option>`).join('')}</select><button class="btn sm" data-spot-wrong>✗ 误关</button><button class="btn sm" data-spot-fast>⚡ 上架</button></div>`;
+  const row = it => `<div data-spot="${it.id}" class="row" style="gap:6px;flex-wrap:wrap;align-items:center;padding:4px 0;border-bottom:1px solid var(--line,#333)"><a href="${esc(it.url)}" target="_blank" rel="noopener" style="flex:1;min-width:220px">${esc(it.title)}</a><span class="muted">${esc(it.origin)} · ${it.closedBy === 'rule' ? '入口规则' : '自动研判'}：${esc(it.reason.slice(0, 40))}</span><select data-spot-cat>${SPOT_CATS.map(k => `<option value="${k}" ${k === it.category ? 'selected' : ''}>${esc(REASON_LABEL[k] || k)}</option>`).join('')}</select><button class="btn sm" data-spot-wrong>${it.recoveryPending ? '继续恢复待审' : '✗ 误关，恢复待审'}</button><button class="btn sm" data-spot-fast>⚡ 上架</button></div>`;
   const likely = data.items.filter(i => i.likely), rest = data.items.filter(i => !i.likely);
   const group = (key, label, list, open) => list.length ? `<details ${open ? 'open' : ''} data-spot-group="${key}"><summary>${label} · ${list.length} 条</summary><p><button class="btn sm pri" data-spot-confirm>✅ 本组其余都关得对</button> <span role="status" data-spot-msg></span></p>${list.map(row).join('')}</details>` : '';
-  body.innerHTML = `<p class="muted">系统自己关闭、你还没看过的线索。先看“可能误关”（标题提到已知厂商或免费、额度、赠送等词）。确认关得对的会成为里程碑 2 的校准样本，类别请按实际选；误关的点 ⚡ 直接上架，或标“误关”。入口规则误关超过 10%（至少 10 次命中）会自动停用。</p>
+  body.innerHTML = `<p class="muted">系统自己关闭、你还没看过的线索。先看“可能误关”（标题提到已知厂商或免费、额度、赠送等词）。确认关得对的会成为里程碑 2 的校准样本，类别请按实际选；误关可恢复待审，恢复完成前可继续操作；⚡ 上架仍按管理员快速上架流程执行。入口规则误关超过 10%（至少 10 次命中）会自动停用。</p>
     ${group('likely', '⚠️ 可能误关', likely, true)}${group('rest', '其余自动关闭', rest, false)}${data.items.length ? '' : '<p class="muted">最近 7 天没有待抽查的自动关闭线索。</p>'}`;
   const done = (el, text) => { el.style.opacity = .45; el.querySelectorAll('button,select').forEach(x => { x.disabled = true; }); if (text) el.insertAdjacentHTML('beforeend', `<span class="small">${esc(text)}</span>`); };
   body.querySelectorAll('[data-spot]').forEach(el => {
     const id = Number(el.dataset.spot), it = data.items.find(x => x.id === id);
-    el.querySelector('[data-spot-wrong]').addEventListener('click', async () => {
-      try { const r = await adm(`/screening/spot-check/${id}/wrong`, {}); el.dataset.handled = '1'; done(el, r.ruleRetired ? '已记为误关，该规则误关过多已自动停用' : '已记为误关'); } catch (e) { toast(e.message); }
-    });
+    const recover = async (fresh = false) => {
+      el.dataset.handled = '1';
+      const buttons = el.querySelectorAll('button,select'); buttons.forEach(x => { x.disabled = true; });
+      let retired = false;
+      try {
+        let result;
+        do {
+          el.querySelector('[data-spot-wrong]').textContent = '正在恢复待审…';
+          result = await adm(`/screening/spot-check/${id}/wrong`, { expectedVersion: fresh ? undefined : it.expectedVersion });
+          fresh = false;
+          it.expectedVersion = result.expectedVersion; retired ||= result.ruleRetired;
+        } while (result.more);
+        done(el, `${result.recovery?.state === 'completed' ? '已恢复审核流程（未自动上架）' : '恢复待继续'}${retired ? '，误关规则已停用' : ''}`);
+      } catch (e) {
+        el.querySelector('[data-spot-wrong]').textContent = '继续恢复待审';
+        buttons.forEach(x => { x.disabled = false; }); toast(`恢复尚未完成：${e.message}；请刷新或继续恢复`);
+      }
+    };
+    el.querySelector('[data-spot-wrong]').addEventListener('click', () => recover());
     el.querySelector('[data-spot-fast]').addEventListener('click', () => {
       if (el.querySelector('[data-fast-track]')) return;
       el.insertAdjacentHTML('beforeend', `<div style="flex-basis:100%">${fastTrackFormHtml({ inline: true, benefit: it.title.slice(0, 500), url: it.url })}</div>`);
-      bindFastTrackForm(el.querySelector('[data-fast-track]'), id, async () => { el.dataset.handled = '1'; await adm(`/screening/spot-check/${id}/wrong`, {}).catch(() => {}); });
+      bindFastTrackForm(el.querySelector('[data-fast-track]'), id, async () => { await recover(true); });
     });
   });
   body.querySelectorAll('[data-spot-confirm]').forEach(button => button.addEventListener('click', async () => {
     const groupEl = button.closest('[data-spot-group]'), msg = groupEl.querySelector('[data-spot-msg]');
-    const rows = [...groupEl.querySelectorAll('[data-spot]')].filter(el => !el.dataset.handled);
+    const rows = [...groupEl.querySelectorAll('[data-spot]')].filter(el => !el.dataset.handled && !data.items.find(it => it.id === Number(el.dataset.spot)).recoveryPending);
     button.disabled = true; let confirmed = 0;
     try {
       for (let i = 0; i < rows.length; i += 15) {
         const chunk = rows.slice(i, i + 15);
-        const r = await adm('/screening/spot-check/confirm', { items: chunk.map(el => ({ id: Number(el.dataset.spot), category: el.querySelector('[data-spot-cat]').value })) });
+        const r = await adm('/screening/spot-check/confirm', { items: chunk.map(el => ({ id: Number(el.dataset.spot), category: el.querySelector('[data-spot-cat]').value, expectedVersion: data.items.find(it => it.id === Number(el.dataset.spot)).expectedVersion })) });
         confirmed += r.confirmed; chunk.forEach(el => { el.dataset.handled = '1'; done(el); }); msg.textContent = `已确认 ${confirmed} 条…`;
       }
       msg.textContent = `已确认 ${confirmed} 条关得对`;

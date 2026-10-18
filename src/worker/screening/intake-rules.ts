@@ -128,8 +128,8 @@ export function ruleResolution(rule: ScreeningRule, key: string | number): LeadR
  * (~10 queries per lead). These leads never become offers, and the URL key already stops the same post coming back.
  */
 export async function closeLeadByRule(db: D1Database, lead: LeadRow, rule: ScreeningRule): Promise<boolean> {
-  const current = lead.resolution ? JSON.parse(lead.resolution) as { identityTaskIds?: string[] } : null;
-  if (current?.identityTaskIds?.length) return false;
+  const current = lead.resolution ? JSON.parse(lead.resolution) as { identityTaskIds?: string[]; spotCheck?: { verdict?: string } } : null;
+  if (current?.identityTaskIds?.length || current?.spotCheck?.verdict === 'wrong') return false;
   const r = await db.prepare(`UPDATE leads SET status='rejected', resolution=? WHERE id=? AND status IN ('new','reviewing') AND resolution IS ?`).bind(JSON.stringify(ruleResolution(rule, lead.id)), lead.id, lead.resolution).run();
   return !!r.meta.changes;
 }
@@ -137,7 +137,10 @@ export async function closeLeadByRule(db: D1Database, lead: LeadRow, rule: Scree
 /** Sweep the open backlog with an approved rule; bounded per request (identity mode caps queries), call again while `more`. */
 export async function applyRuleToOpenLeads(db: D1Database, rule: ScreeningRule, limit = 30): Promise<{ closed: number; more: boolean }> {
   const open = await db.prepare(`SELECT id, url, status, raw, title, resolution, offer_id, origin FROM leads WHERE status IN ('new','reviewing') AND title IS NOT NULL ORDER BY id DESC LIMIT 2000`).all<LeadRow & { origin: string }>();
-  const matching = open.results.filter(lead => matchTitleRule({ title: lead.title ?? '', origin: lead.origin, platformId: null, sourceId: null }, [rule]) && !(lead.resolution && (JSON.parse(lead.resolution) as { identityTaskIds?: string[] }).identityTaskIds?.length));
+  const matching = open.results.filter(lead => {
+    const resolution = JSON.parse(lead.resolution || '{}') as { identityTaskIds?: string[]; spotCheck?: { verdict?: string } };
+    return !resolution.identityTaskIds?.length && resolution.spotCheck?.verdict !== 'wrong' && matchTitleRule({ title: lead.title ?? '', origin: lead.origin, platformId: null, sourceId: null }, [rule]);
+  });
   let closed = 0;
   for (const lead of matching.slice(0, limit)) if (await closeLeadByRule(db, lead, rule)) closed++;
   if (closed) await db.prepare('UPDATE screening_rules SET hits=hits+? WHERE id=?').bind(closed, rule.id).run();

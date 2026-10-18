@@ -41,6 +41,8 @@
 
 ## 发布、事故与工作流查证
 
+- [OpenRouter 官方模型证据与审核恢复](openrouter-evidence-recovery-2026-10-18.md)：官方短帖补证、误关恢复、负面学习纠正与平台要点。
+
 - [AIHOT Codex reset 自动上架](aihot-reset-auto-publish-2026-10-18.md)：管理员授权范围、员工原帖证据、持久续传及发布凭证。
 
 - [D1读取额度耗尽与网站恢复](d1-quota-recovery-2026-10-11.md)：公开快照恢复浏览、身份回填关联索引、配额恢复后的调度，以及尚待验证事项。

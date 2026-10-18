@@ -664,7 +664,12 @@ ingest.get('/corrections', async c => {
   // 只取最近的记录（按主键倒序，读行数有上限）。旧写法对每条修订做相关子查询，单次读几万行，采集时每个信源调一次，曾经用光 D1 每日免费读额度。
   const recentRevs = await c.env.DB.prepare(`SELECT v.offer_id oid, v.diff d, v.at at, v.author author FROM offer_revisions v ORDER BY v.id DESC LIMIT 400`).all<{ oid: string; d: string; at: string; author: string }>();
   const recentRevs2 = recentRevs.results.filter(v => v.author === 'admin' && v.at >= since).slice(0, 200);
-  const recentReviews = await c.env.DB.prepare(`SELECT offer_id oid, action, reason, reason_code code, reviewer, at FROM reviews ORDER BY id DESC LIMIT 600`).all<{ oid: string; action: string; reason: string | null; code: string | null; reviewer: string | null; at: string }>();
+  const recentReviews = await c.env.DB.prepare(`SELECT r.offer_id oid, r.action, r.reason, r.reason_code code, r.reviewer, r.at FROM reviews r
+    WHERE NOT EXISTS(SELECT 1 FROM review_decisions newer WHERE newer.supersedes_id=r.decision_id)
+      AND NOT EXISTS(SELECT 1 FROM review_decisions refusal JOIN lead_candidate_links lc ON lc.candidate_id=refusal.candidate_id JOIN leads origin ON origin.id=lc.lead_id
+        WHERE refusal.id=r.decision_id AND json_extract(origin.resolution,'$.spotCheck.verdict')='wrong'
+        AND julianday(r.at)<=julianday(coalesce(json_extract(origin.resolution,'$.spotCheck.at'),'9999-12-31T00:00:00Z')))
+    ORDER BY r.id DESC LIMIT 600`).all<{ oid: string; action: string; reason: string | null; code: string | null; reviewer: string | null; at: string }>();
   const ids = [...new Set([...recentRevs2.map(v => v.oid), ...recentReviews.results.map(r => r.oid)])];
   const offerRows = ids.length ? (await c.env.DB.prepare(`SELECT id, platform_id p, source_id src, title t, value_text v FROM offers WHERE id IN (SELECT value FROM json_each(?1))`).bind(JSON.stringify(ids)).all<{ id: string; p: string; src: string | null; t: string; v: string }>()).results : [];
   const offerById = new Map(offerRows.map(o => [o.id, o]));
@@ -683,11 +688,19 @@ ingest.get('/corrections', async c => {
   const EARLY: Record<string, string> = { non_ai: '与 AI 无关（含优惠券、购物券）', relay_station: '中转站', account_pool: '账号池', personal_giveaway: '个人分享/送码', paid_bundle: '付费套餐自带', ordinary_discount: '普通折扣/优惠券', model_news_only: '只是模型或价格新闻' };
   const early = await c.env.DB.prepare(`SELECT d.subject_kind kind, d.category, d.justification why, d.labeled_at at, l.title lt, l.origin lo, ic.raw_candidate_json cj
     FROM decision_labels d LEFT JOIN leads l ON d.subject_kind='lead' AND l.id=CAST(d.subject_id AS INTEGER) LEFT JOIN intake_candidates ic ON d.subject_kind='candidate' AND ic.id=d.subject_id
-    WHERE d.actor_kind='owner' AND d.labeled_at>=? AND d.category IN (SELECT value FROM json_each(?)) ORDER BY d.labeled_at DESC LIMIT 200`)
+    WHERE d.actor_kind='owner' AND d.labeled_at>=? AND d.category IN (SELECT value FROM json_each(?))
+      AND (d.subject_kind<>'lead' OR coalesce(json_extract(l.resolution,'$.spotCheck.verdict'),'')<>'wrong' OR julianday(d.labeled_at)>julianday(coalesce(json_extract(l.resolution,'$.spotCheck.at'),'9999-12-31T00:00:00Z')))
+      AND (d.subject_kind<>'candidate' OR EXISTS(SELECT 1 FROM review_decisions refusal
+        WHERE (refusal.candidate_id=ic.id OR refusal.id=ic.decision_id) AND refusal.action='reject'
+          AND NOT EXISTS(SELECT 1 FROM review_decisions newer WHERE newer.supersedes_id=refusal.id)
+          AND NOT EXISTS(SELECT 1 FROM lead_candidate_links lc JOIN leads origin ON origin.id=lc.lead_id WHERE lc.candidate_id=ic.id AND json_extract(origin.resolution,'$.spotCheck.verdict')='wrong'
+            AND (julianday(d.labeled_at)<=julianday(coalesce(json_extract(origin.resolution,'$.spotCheck.at'),'9999-12-31T00:00:00Z'))
+              OR julianday(refusal.created_at)<=julianday(coalesce(json_extract(origin.resolution,'$.spotCheck.at'),'9999-12-31T00:00:00Z'))))))
+      ORDER BY d.labeled_at DESC LIMIT 200`)
     .bind(since, JSON.stringify(Object.keys(EARLY))).all<{ kind: string; category: string; why: string | null; at: string; lt: string | null; lo: string | null; cj: string | null }>();
   for (const e of early.results) {
     let title = e.lt, p: string | null = null;
-    if (e.kind === 'candidate' && e.cj) { try { const j = JSON.parse(e.cj) as { title?: unknown; platformId?: unknown }; title = typeof j.title === 'string' ? j.title : null; p = typeof j.platformId === 'string' ? j.platformId : null; } catch { /* unreadable candidate */ } }
+    if (e.kind === 'candidate' && e.cj) { try { const raw = JSON.parse(e.cj) as { candidate?:{title?:unknown;platformId?:unknown}; title?: unknown; platformId?: unknown }; const j=raw.candidate??raw; title = typeof j.title === 'string' ? j.title : null; p = typeof j.platformId === 'string' ? j.platformId : null; } catch { /* unreadable candidate */ } }
     if (!title) continue;
     const why = e.why && !/^管理员(忽略|关闭)线索$/.test(e.why) ? `，${e.why.slice(0, 160)}` : '';
     items.push({ p: p ?? '', src: null, at: e.at, line: `${e.kind === 'lead' ? '线索' : '候选'}「${title.slice(0, 80)}」${e.lo ? `（${e.lo}）` : ''}在入口阶段被拒：${EARLY[e.category]}${why}` });
@@ -703,7 +716,7 @@ ingest.get('/offers-index', async c => {
   if(!input.success)return c.json({error:'invalid index cursor'},400);
   const {cursor,product}=input.data;
   const rows=await c.env.DB.prepare(`SELECT o.id,o.platform_id AS platformId,o.title,o.value_text AS valueText,o.claim_start AS claimStart,o.claim_end AS claimEnd,o.source_tz AS sourceTz,o.published_at AS publishedAt,o.tags,o.review_state AS reviewState,json_extract(o.evidence,'$.url') AS evidenceUrl,json_extract(o.evidence,'$.excerpts') AS excerpts,
-    (SELECT d.scope_json FROM benefit_entities e JOIN review_decisions d ON d.entity_id=e.id WHERE e.canonical_offer_id=o.id AND d.action='reject' ORDER BY d.created_at DESC LIMIT 1) AS rejectionScope
+    (SELECT d.scope_json FROM benefit_entities e JOIN review_decisions d ON d.entity_id=e.id WHERE e.canonical_offer_id=o.id AND d.action='reject' AND NOT EXISTS(SELECT 1 FROM review_decisions newer WHERE newer.supersedes_id=d.id) ORDER BY d.created_at DESC LIMIT 1) AS rejectionScope
     FROM offers o WHERE o.id>? AND (? IS NULL OR o.platform_id=?) ORDER BY o.id LIMIT 251`).bind(cursor??'',product??null,product??null).all<Record<string,unknown>>();
   const visible=rows.results.slice(0,250);
   return c.json({offers:visible.map(row=>({...row,tags:JSON.parse(String(row.tags)),excerpts:row.excerpts?JSON.parse(String(row.excerpts)):null,rejectionScope:row.rejectionScope?JSON.parse(String(row.rejectionScope)):null})),complete:rows.results.length<=250,nextCursor:rows.results.length>250?String(visible.at(-1)!.id):null});

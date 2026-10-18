@@ -1,3 +1,4 @@
+import {assertOfficialLeadRejection} from '../official-lead-policy';
 import type {LeadResolution} from '../../shared/lead-review';
 import type {ReviewReasonCode} from '../../shared/screening/types';
 import {sha256,stableJson} from '../../shared/identity/normalize';
@@ -8,6 +9,7 @@ import {RULES_VERSION} from '../../shared/identity/compare';
 /** Preserve the existing grounded lead closure as observation-only refusal memory.
  * It grants no offer approval and no product-wide rejection authority. */
 export async function closeIdentityLead(db:D1Database,lead:{id:number;url:string;status:string;raw:string|null;title:string|null;resolution:LeadResolution|null;offerId:string|null},resolution:LeadResolution,sourceText:string,options:{actor?:string;raw?:string|null;reasonCode?:ReviewReasonCode}={}){
+ await assertOfficialLeadRejection(db,{url:lead.url,text:sourceText,reason:resolution.reason,reasonCode:options.reasonCode});
  const row=await db.prepare('SELECT resolution FROM leads WHERE id=?').bind(lead.id).first<{resolution:string|null}>();
  if(!row||stableJson(JSON.parse(row.resolution??'null'))!==stableJson(lead.resolution))throw new IdentityError(409,'lead review changed');
  const command='lead-close:'+lead.id+':'+resolution.jobId,hash=await sha256(stableJson({leadId:lead.id,resolution,sourceText,actor:options.actor??'pipeline:lead-review'}));

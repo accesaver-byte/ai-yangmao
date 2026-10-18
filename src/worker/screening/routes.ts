@@ -1,3 +1,4 @@
+import { IdentityError } from '../identity/store';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { platformMentioned } from '../../shared/lead-scope';
@@ -195,9 +196,18 @@ screeningAdminRoutes.post('/rules/:id/retire', async c => {
 screeningAdminRoutes.get('/spot-check', async c => c.json(await listAutoClosed(c.env.DB, Math.min(30, Math.max(1, Number(c.req.query('days') ?? 7) || 7)))));
 screeningAdminRoutes.post('/spot-check/confirm', async c => {
   try { return c.json(await confirmAutoClosed(c.env.DB, await c.req.json().catch(() => null), c.get('who'))); }
-  catch (error) { if (error instanceof z.ZodError) return c.json({ error: '抽查确认格式不正确（每次最多 15 条）' }, 400); throw error; }
+  catch (error) { if (error instanceof z.ZodError) return c.json({ error: '抽查确认格式不正确（每次最多 15 条）' }, 400); if (error instanceof IdentityError) return c.json({ error: error.message }, error.status); throw error; }
 });
 screeningAdminRoutes.post('/spot-check/:id/wrong', async c => {
-  const result = await markWronglyClosed(c.env.DB, Number(c.req.param('id')), c.get('who'));
-  return result.ok ? c.json(result) : c.json({ error: '没有这条已关闭的线索' }, 404);
+  const id = z.coerce.number().int().positive().safeParse(c.req.param('id'));
+  if (!id.success) return c.json({ error: '线索编号不正确' }, 400);
+  const input = z.object({ expectedVersion: z.string().min(1).optional() }).safeParse(await c.req.json().catch(() => null));
+  if (!input.success) return c.json({ error: '抽查恢复格式不正确' }, 400);
+  try {
+    const result = await markWronglyClosed(c.env.DB, id.data, c.get('who'), input.data.expectedVersion);
+    return result.ok ? c.json(result) : c.json({ error: '没有这条已关闭的线索' }, 404);
+  } catch (error) {
+    if (error instanceof IdentityError) return c.json({ error: error.message }, error.status);
+    throw error;
+  }
 });

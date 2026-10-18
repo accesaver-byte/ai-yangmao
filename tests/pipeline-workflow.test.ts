@@ -15,6 +15,7 @@ const rssSource = { id: 'rss', kind: 'rss', tier: 'site', platformId: 'vendor', 
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
 
 interface HarnessOptions {
+  platforms?: Record<string,unknown>[];
   indexFailure?: boolean;
   ingestResults?: Record<string, unknown>[];
   rescueJob?:boolean;
@@ -54,7 +55,7 @@ function harness(options: HarnessOptions = {}) {
     if (url.endsWith('/observations')) return json({observationId:'obs-test',documentId:'doc-test',contentHash:'a'.repeat(64),truncated:false});
     if (url.endsWith('/candidates')) return json({receipts:body.candidates.map((c:any)=>({inputId:c.inputId,candidateId:'c-'+c.inputId,canonicalOfferId:null,entityId:null,versionId:null,decisionId:null,taskId:null,outcome:'deferred',retryable:true,reasonCodes:['shadow_pending_resolution']}))});
     if (url.endsWith('/snapshots')) return json({ changed: false });
-    if (url.endsWith('/api/platforms')) return json({ platforms: [{ id: 'vendor', name: 'Vendor', site: 'https://vendor.example', xHandles: [], staffHandles: [] }] });
+    if (url.endsWith('/api/platforms')) return json({ platforms: options.platforms ?? [{ id: 'vendor', name: 'Vendor', site: 'https://vendor.example', xHandles: [], staffHandles: [] }] });
     if(url.includes('/fast-track/queue'))return json({jobs:[]});
     if(url.includes('/lead-reviews/queue'))return json({jobs:options.rescueJob?[{id:1312}]:[]});
     if(url.endsWith('/lead-reviews/1312/claim'))return json({claimed:true,jobId:'12345678-1234-4234-8234-123456789012',previousCandidates:options.previousCandidates,lead:{...lead,...options.leads?.[0],id:1312,status:'reviewing'},platforms:options.rescuePlatforms??[{id:'vendor',name:'Vendor',site:'https://vendor.example',xHandles:[],staffHandles:[]}],sources:[],existing:options.known??[]});
@@ -81,6 +82,9 @@ function harness(options: HarnessOptions = {}) {
       ? new Response('verification queue unavailable', { status: options.verificationStatus }) : json({ offers: options.verification ?? [] });
     if (url.endsWith('/verify')) return json({ verified: body.trustedDirect !== false && (options.verified ?? true) });
     if (url.startsWith('https://r.jina.ai/')) return options.jinaBody?new Response(options.jinaBody):new Response('blocked', { status: 403 });
+    if(options.pages?.[url]!==undefined){
+      const response=options.pages[url];return typeof response==='number'?new Response('blocked',{status:response}):new Response(response);
+    }
     if (url.startsWith('https://vendor.example/')) {
       const response = options.pages?.[url] ?? page;
       return typeof response === 'number' ? new Response('blocked', { status: response }) : new Response(response);
@@ -537,4 +541,46 @@ it('hands a WeChat article lead to the administrator for fast-track instead of r
   const result = h.payloads('/lead-reviews/1312/result')[0];
   expect(result).toMatchObject({ outcome: 'manual', manualNow: true });
   expect(result.reason).toContain('快速上架');
+});
+
+it('triages an AIHOT exact official link using the linked page source and provenance',async()=>{
+  const exact='https://vendor.example/exact-free-model';
+  const h=harness({leads:[{...lead,raw:`Vendor official product: ${exact}`}],pages:{[lead.url]:'<p>Try our product.</p>',[exact]:page}});
+  const {runPipeline}=await import('../pipeline/run');await runPipeline();
+  const offer=h.payloads('/offers')[0]?.[0];
+  expect(offer).toMatchObject({evidence:{url:exact,tier:'site',excerpts:{benefit}},sourceFetch:{originalUrl:exact,finalUrl:exact,method:expect.stringMatching(/^(direct|readability)$/)}});
+  expect(offer.sourceText).toContain(benefit);expect(offer.sourceText).not.toContain('Try our product.');
+});
+it('keeps triage evidence and a retryable lead when an admitted linked page fails',async()=>{
+  const exact='https://vendor.example/exact-free-model';
+  const h=harness({leads:[{...lead,raw:`Vendor official product: ${exact}`}],pages:{[exact]:403},modelOutput:JSON.stringify({offers:[]})});
+  const {runPipeline}=await import('../pipeline/run');await runPipeline();
+  expect(h.payloads('/status')[0]).toMatchObject({status:'reviewing'});
+  const model=h.writes.find(w=>w.url.includes('generativelanguage.googleapis.com'));
+  expect(JSON.stringify(model?.body)).toContain(benefit);expect(h.payloads('/offers')).toEqual([]);
+});
+it('does not fetch unadmitted or private links from AIHOT raw text',async()=>{
+  const unsafe=['https://evil.example/free','http://127.0.0.1/private','https://vendor.example.evil.example/free'];
+  const h=harness({leads:[{...lead,raw:'Vendor '+unsafe.join(' ')}]});
+  const {runPipeline}=await import('../pipeline/run');await runPipeline();
+  for(const url of unsafe)expect(h.reads).not.toContain(url);
+  expect(h.payloads('/offers')[0]?.[0].evidence.url).toBe(lead.url);
+});
+
+
+it('keeps an admitted OpenRouter official P3 lead reviewing when successful linked free-page extraction is empty',async()=>{
+  const url='https://x.com/OpenRouter/status/2110755162214338984';
+  const exact='https://openrouter.ai/nvidia/nemotron-3.5-super-vl:free';
+  const embed='https://cdn.syndication.twimg.com/tweet-result?id=2110755162214338984&lang=en&token=0';
+  const linkedText='Nemotron 3.5 Super VL (free). Free inference: input $0, output $0 per million tokens.';
+  const h=harness({platforms:[{id:'openrouter',name:'OpenRouter',site:'https://openrouter.ai',xHandles:['@OpenRouter'],staffHandles:[]}],
+    leads:[{...lead,url,title:'OpenRouter Nemotron 3.5 Super VL launch',raw:`OpenRouter ${exact}`}],
+    pages:{[embed]:JSON.stringify({id_str:'2110755162214338984',user:{screen_name:'OpenRouter'},text:'Try it: https://t.co/nMwAvm5wm3',entities:{urls:[{expanded_url:exact}]}}),[exact]:`<article><p>${linkedText}</p><p>${'Model documentation. '.repeat(10)}</p></article>`},
+    modelOutput:JSON.stringify({offers:[]})});
+  const {runPipeline}=await import('../pipeline/run');await runPipeline();
+  expect(h.reads).toContain(exact);expect(h.payloads('/offers')).toEqual([]);
+  expect(h.payloads('/status')[0]).toMatchObject({status:'reviewing',note:expect.stringContaining('模型漏抽不构成否定证据')});
+  expect(h.payloads('/status').some(write=>write.status==='rejected')).toBe(false);
+  const model=h.writes.find(w=>w.url.includes('generativelanguage.googleapis.com'));
+  expect(JSON.stringify(model?.body)).toContain(linkedText);
 });
