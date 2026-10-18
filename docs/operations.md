@@ -36,13 +36,13 @@ npx tsx .claude/skills/yangmao-review/scripts/offer.ts plan <短码> patch.json
 
 `main` 的 `protect-main` 规则要求 PR、至少 1 个批准、代码所有者审核和 `check` 检查通过；新提交会撤销旧批准，审核讨论必须解决。`.github/CODEOWNERS` 将全部文件（包括它自身及工作流）指定给 `@accesaver-byte`。另设主分支更新限制，仅仓库所有者可通过 PR 合并；协作者不能直接推送或自行合并，部署密钥和 GitHub App 不再豁免。所有者自己发起的 PR 无法自我批准，须由所有者主动选择 PR 豁免合并；普通协作者没有此权限。
 
-采集、纠正归纳及两项真实模型回归共用 `production` Environment：仅允许 `main` 分支，唯一审批人为 `accesaver-byte`，禁止管理员跳过环境审批。允许所有者批准自己启动的任务，否则唯一审批人无法手动补跑。敏感凭据仅保存在环境 Secrets，仓库级同名副本必须为空；增加新凭据时也遵循此规则，不能放回仓库级 Secrets。
+采集、纠正归纳、两项真实模型回归及凭据验收共用 `production` Environment：仅允许 `main` 分支，不设置 required reviewers 或等待时间。已审核合入 `main` 的代码可自动取用环境凭据运行，开发分支仍不能取用。敏感凭据仅保存在环境 Secrets，仓库级同名副本必须为空；增加新凭据时也遵循此规则，不能放回仓库级 Secrets。
 
-**包括定时采集在内，每次敏感任务都会等待所有者在 Actions → 对应运行 → Review deployments 中批准 `production`，批准前不会运行作业或取用环境密钥。** 不批准时不会自动采集；此配置以人工审批优先，不能把等待审批当作采集成功。代码 PR 审核与任务运行审批是两个独立步骤。
+**定时采集、纠正归纳、模型回归和凭据验收均无需点击 Review deployments；定时任务按调度自动执行，手动补跑也直接运行。** 人工审核保留在代码 PR 合并环节，不对已批准代码的每次运行重复审批。工作流权限调整不改变福利条目的收录、审核或自动上架业务规则。
 
 普通 PR 的 `check` 不使用生产环境或生产凭据。默认 `GITHUB_TOKEN` 仅只读；纠正归纳为创建规则建议 PR 显式申请 contents/pull-requests 写权限。GitHub Actions 创建/批准 PR 的仓库开关保留开启以支持该功能，但机器人不在 CODEOWNERS 或主分支更新豁免名单，不能代替所有者批准或合并。
 
-手动验收运行 `verify-credential-protection.yml`：它只检查 8 项环境 Secrets 是否非空，不调用模型、不写业务数据、不输出凭据。审批前应显示等待 `accesaver-byte`；从非 `main` 分支运行时应被环境分支策略阻止。
+手动验收运行 `verify-credential-protection.yml`：它只检查 8 项环境 Secrets 是否非空，不调用模型、不写业务数据、不输出凭据。从 `main` 运行应无需人工审批直接成功，运行审批记录为空；从非 `main` 分支运行时应被环境分支策略阻止。
 
 仓库已开启 GitHub Secret scanning 和 Push protection；GitHub 仅对其支持的密钥格式提供原生检测与拦截，不能据此保证识别所有自定义业务令牌。当前个人仓库不支持委派绕过审批：有写权限的贡献者仍可填写理由绕过原生推送拦截，因此须关注绕过告警，不能把推送保护当作不可绕过的门禁。不要提交真实密钥来测试拦截。`.github/workflows/` 的外部 Actions 均固定为官方仓库中核实的完整 40 位提交 SHA（注释保留原主版本），仓库 Actions 策略强制使用完整 SHA；新增或升级 Action 必须先核实官方提交，再通过所有者审核的 PR 更新，不能改回可移动的版本标签。旧开发分支须同步这些工作流后再运行 CI。
 
