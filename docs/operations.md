@@ -213,7 +213,7 @@ Worker 的规则比较器在入库时已自动结案约 95% 候选（重复已�
 
 ## 线索关键词与综合福利版块
 
-线索关键词（`pipeline/lib.ts` 的 LEAD）覆盖服务故障补偿/消耗返还和只写“全局重置/Day N Reset”的员工公告；AIHOT 动态按标题与摘要一起判断，重置接口每个事件只出一条线索，用最早的主公告并附全部回帖与事件时间（2026-10-15 漏抓修复）。社区 feed 的 `config.filter`：`all` 整版收录，`ai` 只收标题涉及 AI 产品/模型且不是中转站、号池、倍率推广的帖子（综合福利版块用），缺省按 LEAD。中继信源的代码由 Mac 主检出运行，合并并拉取后再切换配置。
+线索关键词（`pipeline/lib.ts` 的 LEAD）覆盖服务故障补偿/消耗返还和只写“全局重置/Day N Reset”的员工公告，也识别 `Day 13/ Le limit reset` 这种带简短修饰词的写法。AIHOT 动态按标题与摘要一起判断；重置接口每个事件只出一条线索，用最早的主公告并附全部回帖与事件时间。若主公告只在 `posts[].context`，仅补同作者、ID/网址一致、含福利语义的 `reply` 上文，规范化 `/i/status/` 为作者地址；不将 `quote` 旧事件或其他作者上下文选作本轮主帖。正文优先 `fullOriginalText/fullText`，同一推文去重；上下文仍只是线索，官方证据须单独读取（2026-10-18 Day 13 回归修复，发布状态见[排查凭证](codex-reset-missed-2026-10-18.md)）。社区 feed 的 `config.filter`：`all` 整版收录，`ai` 只收标题涉及 AI 产品/模型且不是中转站、号池、倍率推广的帖子（综合福利版块用），缺省按 LEAD。中继信源的代码由 Mac 主检出运行，合并并拉取后再切换配置。
 
 官方出处搜索：配置了 Actions secret `EXA_API_KEY`（2026-10-15 已配置）时调用 Exa REST `POST https://api.exa.ai/search`（`type:auto` + `objective`，不取正文，只要结果网址），调用方以 `site:` 写的登记官方站点与 X 账号转成 `includeDomains`；未配置密钥时用 Exa 匿名 MCP 端点。两者限流或出错时改用 OpenRouter 联网搜索插件（免费模型，约 $0.007/次），按次预留并入账到同一月度付费上限，每轮最多 `OPENROUTER_SEARCH_PER_RUN`（默认 6）次。线索研判只附线索提到的平台的已有条目；`MODEL_OUTPUT_LIMIT` 为 8192，给推理型模型留出输出余量。
 

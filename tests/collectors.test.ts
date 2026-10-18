@@ -27,6 +27,49 @@ const aihotSource = (url: string) => ({ id: 'aihot', kind: 'aihot', url, tier: '
 
 // 2026-10-15：AIHOT 重置事件按新到旧列帖，原先取第一条只拿到“2 小时内到账”的回复，没有日期，被并入旧轮次。
 describe('AIHOT Codex 重置事件', () => {
+  it('从同作者 reply context 找回 Day 13 主帖，并保留完整正文与到账回复', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ events: [{
+      title: 'Tibo 确认重置', createdAt: new Date().toISOString(), posts: [{
+        url: 'https://x.com/thsottiaux/status/2111492738025959922',
+        originalText: 'Landing sometime today', fullOriginalText: 'Landing sometime today by EOD PST',
+        context: [{ id: '2111492673890824348', author: 'thsottiaux', relation: 'reply',
+          url: 'https://x.com/i/status/2111492673890824348', originalText: 'Day 13/ Le limit reset' }],
+      }],
+    }] })));
+    const leads = await aihot(aihotSource('https://aihot.news/api/v1/codex-resets'));
+    expect(leads).toHaveLength(1);
+    expect(leads[0].url).toBe('https://x.com/thsottiaux/status/2111492673890824348');
+    expect(leads[0].title).toContain('2026-10-17T16:20Z');
+    expect(leads[0].raw).toMatch(/Day 13\/ Le limit reset[\s\S]*Landing sometime today by EOD PST/);
+  });
+  it('不把引用的旧重置、其他作者或 ID 不符的上下文当作本次主帖', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ events: [{
+      createdAt: new Date().toISOString(), posts: [{
+        url: 'https://x.com/thsottiaux/status/2111492738025959922', originalText: 'Landing sometime today by EOD PST',
+        context: [
+          { id: '2110595484180214059', author: 'thsottiaux', relation: 'quote', url: 'https://x.com/i/status/2110595484180214059', originalText: 'Day 10/ Reset' },
+          { id: '2111492673890824348', author: 'someone_else', relation: 'reply', url: 'https://x.com/i/status/2111492673890824348', originalText: 'Day 13/ Le limit reset' },
+          { id: '2111492673890824348', author: 'thsottiaux', relation: 'reply', url: 'https://x.com/i/status/2110595484180214059', originalText: 'Day 13/ Le limit reset' },
+        ],
+      }],
+    }] })));
+    const [lead] = await aihot(aihotSource('https://aihot.news/api/v1/codex-resets'));
+    expect(lead.url).toBe('https://x.com/thsottiaux/status/2111492738025959922');
+  });
+  it('主帖同时出现在 posts 和 context 时只保留一次，优先完整原帖', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ events: [{
+      createdAt: new Date().toISOString(), posts: [
+        { url: 'https://x.com/thsottiaux/status/2111492738025959922', originalText: 'Landing sometime today by EOD PST',
+          context: [{ id: '2111492673890824348', author: '@thsottiaux', relation: 'reply',
+            url: 'https://x.com/i/status/2111492673890824348', originalText: 'Day 13/ Le limit reset' }] },
+        { url: 'https://x.com/thsottiaux/status/2111492673890824348', originalText: 'Day 13/', fullOriginalText: 'Day 13/ Le limit reset. Main post full text.' },
+      ],
+    }] })));
+    const [lead] = await aihot(aihotSource('https://aihot.news/api/v1/codex-resets'));
+    expect(lead.url).toBe('https://x.com/thsottiaux/status/2111492673890824348');
+    expect(lead.raw?.match(/Day 13/g)).toHaveLength(1);
+    expect(lead.raw).toContain('Main post full text.');
+  });
   it('每个事件一条线索：用最早的主公告，标题带事件时间，原文带全部帖子', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ events: [{
       title: 'Tibo 确认重置', displayLabel: '重置（形式未明确）', occurredOn: null, createdAt: new Date().toISOString(),

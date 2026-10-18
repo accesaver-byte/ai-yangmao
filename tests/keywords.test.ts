@@ -12,6 +12,11 @@ describe('羊毛关键词', () => {
   it('社区线索里的同类说法能被识别', () => {
     for (const s of ['即梦每日登录送66积分', '硅基流动实名认证送16元代金券', 'Dreamina 90% off first month', '邀请好友双方各得250积分']) expect(isLead(s), s).toBe(true);
   });
+  it('保留 Day N 公告中带简短修饰词的重置，不跨行拼接无关文字', () => {
+    expect(isLead('Day 13/ Le limit reset')).toBe(true);
+    expect(isLead('Day 14/ Usage limit reset')).toBe(true);
+    expect(isLead('Day 13/ Product news\nFactory reset your phone')).toBe(false);
+  });
   // 2026-10-15 漏抓：故障补偿和只写“重置”的员工公告
   it('故障补偿、消耗返还和全局重置能被识别', () => {
     for (const s of ['DeepSeek 服务故障近 5 小时，官方补偿所有 API 用户 7 天内消耗金额', 'DeepSeek 就 10 月 15 日 API 故障致歉并全额补偿 7 日消耗金额',

@@ -3,6 +3,7 @@ import { XMLParser } from 'fast-xml-parser';
 import { BROWSER_UA, UA, fetchRetry, fetchText, isAiFreebieTopic, isLead, sleep } from './lib';
 import type { LeadIn } from '../src/shared/ingest';
 import { xPostTime } from '../src/shared/lead-scope';
+import { officialStatusKey } from '../src/shared/dedupe';
 
 export interface Source { id: string; kind: string; url: string; tier: string; platformId: string | null; lastHash: string | null; lastText?: string | null; lastOkAt?: string | null; config?: Record<string, unknown>; deferThisRun?: boolean; platform: { id: string; name: string; status: string } | null; autoPublish: boolean }
 
@@ -17,11 +18,31 @@ export async function aihot(src: Source): Promise<LeadIn[]> {
     // 只收最近 7 天的重置。每个事件一条线索，用最早的那条原帖（主公告）作地址：AIHOT 按新到旧排列，
     // 取第一条会拿到“2 小时内到账”“搞定收工”这类没有上下文的回复（2026-10-15 Day 10 重置因此被误判为旧轮次）。
     const since = Date.now() - 7 * 86400_000;
-    type Post = { url?: string; text?: string; originalText?: string };
+    type Post = { url?: string; text?: string; originalText?: string; fullText?: string; fullOriginalText?: string;
+      context?: { id?: string; author?: string; relation?: string; url?: string; text?: string; originalText?: string }[] };
+    const postText = (p: Post) => [...new Set([p.fullOriginalText || p.originalText, p.fullText || p.text].filter(Boolean))].join('\n');
     return (j.events as { title?: string; displayLabel?: string; occurredOn?: string; createdAt?: string; posts?: Post[] }[])
       .filter(e => Date.parse(e.occurredOn ?? e.createdAt ?? '') >= since)
       .flatMap(e => {
-        const posts = (e.posts ?? []).filter(p => p.url).map(p => ({ ...p, at: xPostTime(p.url!) }))
+        // AIHOT 有时只在 reply context 中给主公告（Day 13）。只补同作者的直接回复上文；
+        // quote 可能回顾旧轮次，不能用它替换本次发放的主链接。这里只构造线索，官方证据仍须独立读取。
+        const contexts: Post[] = (e.posts ?? []).flatMap(p => {
+          const handle = p.url && officialStatusKey(p.url)?.split('/')[1];
+          if (!handle || handle === 'i') return [];
+          return (p.context ?? []).flatMap(parent => {
+            if (parent.relation !== 'reply' || parent.author?.replace(/^@/, '').toLowerCase() !== handle || !parent.url || !isLead(postText(parent))) return [];
+            const key = officialStatusKey(parent.url), parts = key?.split('/');
+            if (!parts || !['i', handle].includes(parts[1]) || (parent.id && parts[3] !== parent.id)) return [];
+            return [{ url: `https://x.com/${handle}/status/${parts[3]}`, originalText: parent.originalText, text: parent.text }];
+          });
+        });
+        // posts 的完整正文优先于 context 的摘要；相同推文即使使用 /i/status/ 也只保留一次。
+        const unique = new Map<string, Post>();
+        for (const p of [...contexts, ...(e.posts ?? [])]) if (p.url) {
+          const key = officialStatusKey(p.url)?.split('/').at(-1) ?? p.url;
+          unique.set(key, p);
+        }
+        const posts = [...unique.values()].map(p => ({ ...p, at: xPostTime(p.url!) }))
           .sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity));
         const main = posts[0];
         if (!main) return [];
@@ -29,7 +50,7 @@ export async function aihot(src: Source): Promise<LeadIn[]> {
         return [{
           origin: 'aihot' as const, url: main.url!,
           title: `Codex ${e.displayLabel ?? ''}：${e.title ?? ''}（${e.occurredOn ?? when}）`.slice(0, 300),
-          raw: [`事件时间：${when}`, ...posts.map(p => `${p.at != null ? new Date(p.at).toISOString() : ''} ${p.url}\n${[p.originalText, p.text].filter(Boolean).join('\n')}`)].join('\n').slice(0, 4000),
+          raw: [`事件时间：${when}`, ...posts.map(p => `${p.at != null ? new Date(p.at).toISOString() : ''} ${p.url}\n${postText(p)}`)].join('\n').slice(0, 4000),
         }];
       });
   }
