@@ -44,6 +44,8 @@ npx tsx .claude/skills/yangmao-review/scripts/offer.ts plan <短码> patch.json
 
 手动验收运行 `verify-credential-protection.yml`：它只检查 8 项环境 Secrets 是否非空，不调用模型、不写业务数据、不输出凭据。审批前应显示等待 `accesaver-byte`；从非 `main` 分支运行时应被环境分支策略阻止。
 
+仓库已开启 GitHub Secret scanning 和 Push protection；GitHub 仅对其支持的密钥格式提供原生检测与拦截，不能据此保证识别所有自定义业务令牌。当前个人仓库不支持委派绕过审批：有写权限的贡献者仍可填写理由绕过原生推送拦截，因此须关注绕过告警，不能把推送保护当作不可绕过的门禁。不要提交真实密钥来测试拦截。`.github/workflows/` 的外部 Actions 均固定为官方仓库中核实的完整 40 位提交 SHA（注释保留原主版本），仓库 Actions 策略强制使用完整 SHA；新增或升级 Action 必须先核实官方提交，再通过所有者审核的 PR 更新，不能改回可移动的版本标签。旧开发分支须同步这些工作流后再运行 CI。
+
 ## 调度与线索到审核
 
 **AIHOT Codex reset（2026-10-18管理员授权）**：`aihot-resets` 可启用专用自动上架，采集器使用 AIHOT 提供的 X 员工原帖链接作证据，跳过模型研判排队并走既有身份去重与版本化批准；其他线索源仍按原规则。主公告上下文修复、开关、续传及发布凭证见 [专项说明](aihot-reset-auto-publish-2026-10-18.md)。
