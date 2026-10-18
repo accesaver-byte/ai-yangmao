@@ -87,16 +87,27 @@ export function syndicatedPostText(url:string,payload:unknown):string|null {
 export interface OutboundLink {url:string;title?:string}
 export function syndicatedPostLinks(url:string,payload:unknown):OutboundLink[] {
   if(!syndicatedPostText(url,payload))return [];
-  const post=payload as {entities?:{urls?:{expanded_url?:unknown}[]};card?:{binding_values?:Record<string,{string_value?:unknown}>}};
+  const post=payload as {entities?:{urls?:{url?:unknown;expanded_url?:unknown}[]};card?:{url?:unknown;binding_values?:Record<string,{string_value?:unknown}>}};
   const values=post.card?.binding_values;
   const title=typeof values?.title?.string_value==='string'?values.title.string_value:undefined;
-  const links=[...(Array.isArray(post.entities?.urls)?post.entities.urls:[]).map(link=>link?.expanded_url),values?.card_url?.string_value];
-  const result:OutboundLink[]=[];
-  for(const value of links){
-    if(typeof value!=='string')continue;
-    try{const target=assertSafeUrl(value).href;if(!result.some(link=>link.url===target))result.push({url:target});}catch{/* Unsafe preview links are not navigation targets. */}
+  const safe=(value:unknown)=>{if(typeof value!=='string')return undefined;try{return assertSafeUrl(value).href;}catch{return undefined;}};
+  const aliases=new Map<string,string>();
+  const targets=new Map<string,OutboundLink>();
+  const add=(target:string)=>{const key=normUrl(target);if(!targets.has(key))targets.set(key,{url:target});return targets.get(key)!;};
+  for(const link of Array.isArray(post.entities?.urls)?post.entities.urls:[]){
+    const expanded=safe(link?.expanded_url);if(!expanded)continue;
+    add(expanded);
+    const short=safe(link?.url);if(short)aliases.set(normUrl(short),expanded);
   }
-  if(title&&result.length===1)result[0].title=title;
+  // Card URLs commonly repeat the t.co entity alias. Bind the preview to its expanded destination.
+  const cardUrl=safe(values?.card_url?.string_value??post.card?.url);
+  if(cardUrl){
+    const target=add(aliases.get(normUrl(cardUrl))??cardUrl);
+    if(title)target.title=title;
+  }else if(title&&values?.card_url?.string_value===undefined&&post.card?.url===undefined&&targets.size===1){
+    [...targets.values()][0].title=title;
+  }
+  const result=[...targets.values()];
   return result;
 }
 

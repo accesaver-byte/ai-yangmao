@@ -15,6 +15,17 @@ describe('X evidence navigation',()=>{
   expect(page.outboundLinks).toEqual([{url:product,title:'Nemotron3.5SuperVL(free)'}]);
   expect(page).toMatchObject({originalUrl:url,finalUrl:url,sourceVerified:true,fetchMethod:'first_party_embed'});
  });
+ it('resolves the real card shortlink alias and preserves its title only on the expanded target',async()=>{
+  const other='https://openrouter.ai/docs/free-models';
+  const title='Nemotron 3.5 Super VL (free) - API Pricing & Providers';
+  const realistic={...post,entities:{urls:[{url:'https://t.co/docs',expanded_url:other},{url:'https://t.co/nMwAvm5wm3',expanded_url:product},{url:product,expanded_url:product}]},
+    card:{url:'https://t.co/nMwAvm5wm3',binding_values:{card_url:{type:'STRING',string_value:'https://t.co/nMwAvm5wm3'},title:{type:'STRING',string_value:title}}}};
+  vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify(realistic))));
+  const page=await fetchPage(url,{tries:1});
+  expect(page.outboundLinks).toEqual([{url:other},{url:product,title}]);
+  expect(page.outboundLinks?.some(link=>link.url.startsWith('https://t.co/'))).toBe(false);
+  expect(page.text).toBe('@OpenRouter\n'+post.text);expect(page.text).not.toContain(title);
+ });
  it.each([{...post,id_str:'2110755162214338985'},{...post,user:{screen_name:'attacker'}}])('drops metadata when author or ID mismatches',wrong=>{
   expect(syndicatedPostText(url,wrong)).toBeNull();expect(syndicatedPostLinks(url,wrong)).toEqual([]);
  });
