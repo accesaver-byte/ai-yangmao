@@ -44,6 +44,9 @@ npx tsx .claude/skills/yangmao-review/scripts/offer.ts plan <短码> patch.json
 
 手动验收运行 `verify-credential-protection.yml`：它只检查 8 项环境 Secrets 是否非空，不调用模型、不写业务数据、不输出凭据。审批前应显示等待 `accesaver-byte`；从非 `main` 分支运行时应被环境分支策略阻止。
 
+仓库已开启 GitHub Secret scanning 和 Push protection；GitHub 仅对其支持的密钥格式提供原生检测与拦截，不能据此保证识别所有自定义业务令牌。不要提交真实密钥来测试拦截。`.github/workflows/` 的外部 Actions 均固定为官方仓库中核实的完整 40 位提交 SHA（注释保留原主版本），仓库 Actions 策略强制使用完整 SHA；新增或升级 Action 必须先核实官方提交，再通过所有者审核的 PR 更新，不能改回可移动的版本标签。旧开发分支须同步这些工作流后再运行 CI。
+
+
 ## 调度与线索到审核
 
 | 执行方 | 时间基准与调度 | 工作 |
