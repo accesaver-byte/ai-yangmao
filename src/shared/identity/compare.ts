@@ -1,5 +1,6 @@
 import { canonicalTermsSchema, evidenceContextSchema, versionedEntitySchema, type CanonicalTermsV1, type EvidenceContext, type VersionedEntity, type ResolutionResult, type Fact } from './types';
 import { normalizeTerms, stableJson, withoutEvidence } from './normalize';
+import { modelIdentityKey } from '../model-names';
 export const RESOLVER_VERSION = 'identity-v2';
 export const RULES_VERSION = 'identity-rules-v1';
 const equal = (a: unknown,b: unknown) => stableJson(withoutEvidence(a))===stableJson(withoutEvidence(b));
@@ -52,7 +53,9 @@ export function compareCandidate(raw:CanonicalTermsV1,rawEntity:VersionedEntity,
     const value=incomingSlots.get(field);
     if(!value || value.state==='unknown'){if(old.state!=='unknown')incomplete=true;continue;}
     if(old.state==='unknown'){added=true;continue;}
-    if(!equal(old,value))result.conflicts.push({field,before:withoutEvidence(old) as never,after:withoutEvidence(value) as never,evidenceRefs:value.evidenceRefs});
+    const modelIds=(v:unknown)=>Array.isArray(v)?[...new Set(v.map(String).map(modelIdentityKey).filter(Boolean))].sort():v;
+    const sameModels=field.endsWith('.models')&&old.state==='known'&&value.state==='known'&&equal(modelIds(old.value),modelIds(value.value));
+    if(!sameModels&&!equal(old,value))result.conflicts.push({field,before:withoutEvidence(old) as never,after:withoutEvidence(value) as never,evidenceRefs:value.evidenceRefs});
   }
   for(const [field,value] of incomingSlots)if(!oldSlots.has(field)&&value.state!=='unknown')added=true;
   const poolKeys=before.benefitPools.map(p=>p.poolKey),newPoolKeys=candidate.benefitPools.map(p=>p.poolKey);

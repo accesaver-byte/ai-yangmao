@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { modelMatches, normalizeModelNames } from './model-names';
 import { claimEndAt, isClaimable, liveStatus, OFFER_TYPES } from './lifecycle';
 import { matchMembership, migrateLegacyMembership, type MembershipCatalog, type MembershipRequirement } from './membership';
 import { haoScore, type ScoreInput } from './score';
@@ -84,8 +85,8 @@ export function searchAgentOffers(offers:AgentOffer[],catalog:MembershipCatalog,
     if(q.platform&&!([o.platformId,o.platform].some(v=>lower(v)===lower(q.platform!))))return false;
     if(q.type&&q.type!==o.type||q.claimMethod&&q.claimMethod!==o.claimMethod)return false;
     if(q.modality&&!o.modalities.some(m=>m===q.modality||['text','code'].includes(m)&&['text','code'].includes(q.modality!)))return false;
-    if(q.model&&!o.models.some(m=>lower(m).includes(lower(q.model!))))return false;
-    if(q.q&&!lower([o.title,o.valueText,o.platform,...o.models,...o.tags].join(' ')).includes(lower(q.q)))return false;
+    if(q.model&&!o.models.some(m=>modelMatches(m,q.model!)))return false;
+    if(q.q&&!lower([o.title,o.valueText,o.platform,...o.models,...o.tags].join(' ')).includes(lower(q.q))&&!o.models.some(m=>modelMatches(m,q.q!)))return false;
     if(q.endsWithinDays!==undefined&&(!end||end<now||end.getTime()-now.getTime()>q.endsWithinDays*86400_000))return false;
     if(q.valuationMethod&&valueGroup(o)!==q.valuationMethod)return false;
     if(q.requires&&!q.requires.every(k=>has(o,[k])))return false;
@@ -95,7 +96,7 @@ export function searchAgentOffers(offers:AgentOffer[],catalog:MembershipCatalog,
     if(q.requirement==='nopay'&&has(o,['pay','member','unknown']))return false;
     if(q.requirement==='special'&&!has(o,['student','biz','invite','targeted','member']))return false;
     return true;
-  }).map(o=>({...o,status:liveStatus(o,now),score:haoScore(o,now),eligibility:qualifyOffer(o,q.profile,catalog,now)}));
+  }).map(o=>({...o,models:normalizeModelNames(o.models),status:liveStatus(o,now),score:haoScore(o,now),eligibility:qualifyOffer(o,q.profile,catalog,now)}));
   if(q.eligibility!=='all')rows=rows.filter(o=>o.eligibility.status===q.eligibility);
   const counts={eligible:0,ineligible:0,unknown:0}; rows.forEach(o=>counts[o.eligibility.status]++);
   rows.sort((a,b)=> {

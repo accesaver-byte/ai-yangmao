@@ -1,3 +1,4 @@
+import * as YMModels from '../src/shared/model-names';
 import * as YMMembership from '../src/shared/membership';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
@@ -11,7 +12,7 @@ async function pageFixture() {
   const queue={pending:[makeOffer('first'),makeOffer('second')],incomplete:Array.from({length:8},(_,i)=>makeOffer(`live-${i}`)),newLeads:0,needsVerification:[],pendingPlatforms:[],suggestAutoPublish:[]};
   const writes:unknown[]=[]; const requests:string[]=[];
   const timers:Function[]=[];
-  const context=createContext({YMMembership, structuredClone,document,window,console,Intl,Date,Map,Set,URL,Response,FormData,
+  const context=createContext({YMModels,YMMembership, structuredClone,document,window,console,Intl,Date,Map,Set,URL,Response,FormData,
     location:{hash:'#admin'},navigator:{},getComputedStyle:()=>({getPropertyValue:()=> '#123456'}),
     matchMedia:()=>({matches:false,addEventListener(){}}),MutationObserver:class{observe(){}},
     localStorage:{getItem(){return null},setItem(){},removeItem(){}},sessionStorage:{getItem(){return null},setItem(){},removeItem(){}},

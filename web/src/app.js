@@ -988,11 +988,10 @@ function pApply() {
 }
 
 /* ---------- 按模型找 ---------- */
-/** 模型名归一：忽略大小写、空格、连字符和末尾的 Free，方便把各平台的不同写法归到同一个模型。 */
-const modelKey = m => m.toLowerCase().replace(/\(.*?\)|（.*?）/g, '').replace(/\bfree\b/g, '').replace(/[\s\-_.·]+/g, '');
+const modelKey = YMModels.modelIdentityKey;
 function modelIndex() {
   const idx = new Map();
-  OFFERS.filter(o => statusOf(o) !== 'ended').forEach(o => (o.models || []).forEach(name => {
+  OFFERS.filter(o => statusOf(o) !== 'ended').forEach(o => YMModels.normalizeModelNames(o.models || []).forEach(name => {
     const k = modelKey(name); if (!k) return;
     if (!idx.has(k)) idx.set(k, { name, offers: [] });
     const e = idx.get(k); if (!e.offers.includes(o)) e.offers.push(o);
@@ -1004,7 +1003,7 @@ let MODEL_Q = '';
 function pModels() {
   const all = modelIndex();
   const q = MODEL_Q.trim().toLowerCase();
-  const list = q ? all.filter(m => m.name.toLowerCase().includes(q) || modelKey(m.name).includes(modelKey(q))) : all;
+  const list = q ? all.filter(m => YMModels.modelMatches(m.name, q)) : all;
   const limited = o => o.ty !== 'standing' && o.ty !== 'apply';
   const row = o => `<a class="orow" href="#offer-${o.id}" style="grid-template-columns:auto minmax(0,1fr) auto"><span>${etag(o.ty)}</span><span class="t">${esc(o.plat.name)}<small>${esc(o.t)}</small></span>${stChip(o)}</a>`;
   main().innerHTML = ribbon() + ph('按模型找', '同一个模型，在哪些平台能免费用？限时免费会标出截止时间。') + `

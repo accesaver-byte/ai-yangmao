@@ -6,6 +6,7 @@ import { readMembershipCatalog } from './membership';
 import { quotaFailure, snapshotActive, snapshotResponse } from './public-snapshot';
 import { agentSearchSchema, qualifyOffer, searchAgentOffers, type AgentOffer, type AgentSearch } from '../shared/agent-query';
 import { liveStatus } from '../shared/lifecycle';
+import { normalizeModelNames, MODEL_NAMES_VERSION } from '../shared/model-names';
 import { publicSafeValuation, valuationMatchesAmounts } from '../shared/valuation';
 import type { MembershipCatalog } from '../shared/membership';
 import { readLatestDaily } from './daily';
@@ -24,7 +25,7 @@ function publicOffer(o:any,platform:string):AgentOffer {
   const valuation=publicSafeValuation(o.valuation);
   return {id:o.id,platformId:o.platformId,platform,title:o.title,type:o.type,valueText:o.valueText,
     usdEstimate:o.usdEstimate??null,usdMax:o.usdMax??null,valuation:valuation&&valuationMatchesAmounts(valuation,o)?valuation:null,
-    modalities:o.modalities??[],models:o.models??[],tags:o.tags??[],claimMethod:o.claimMethod,requirements:o.requirements??[],
+    modalities:o.modalities??[],models:normalizeModelNames(o.models),tags:o.tags??[],claimMethod:o.claimMethod,requirements:o.requirements??[],
     audience:o.audience,steps:o.steps??[],creditValidity:o.creditValidity??null,membershipRequirement:o.membershipRequirement??null,
     claimStart:o.claimStart??null,claimEnd:o.claimEnd??null,endKind:o.endKind,sourceTz:o.sourceTz,
     discoveredAt:o.discoveredAt,lastVerifiedAt:o.lastVerifiedAt??null,verifyResult:o.verifyResult??null,withdrawnAt:o.withdrawnAt??null,
@@ -49,7 +50,7 @@ async function readDataset(env:Env,ctx?:AgentContext):Promise<Dataset>{
   const cache=typeof caches==='undefined'?null:(caches as CacheStorage&{default:Cache}).default;
   try {
     const state=await env.DB.prepare('SELECT generation FROM identity_public_state WHERE id=1').first<{generation:number}>();
-    const key=new Request(`${SITE}/api/agent/__dataset?schema=agent-v2&generation=${state?.generation??'none'}`);
+    const key=new Request(`${SITE}/api/agent/__dataset?schema=agent-v2&models=${MODEL_NAMES_VERSION}&generation=${state?.generation??'none'}`);
     try{const hit=state?await cache?.match(key):null;if(hit)return await hit.json() as Dataset;}catch{/* Optional cache failures must not prevent a DB read. */}
     const d=drizzle(env.DB,{schema:s});
     const [platforms,rows,catalog,collection]=await Promise.all([

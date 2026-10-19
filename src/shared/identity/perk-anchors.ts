@@ -3,6 +3,7 @@
  * different sources describe it differently, so identity shortcuts compare what actually defines a perk — the
  * vendor, amounts, models and requirements — and treat wording only as a tiebreaker.
  */
+import { modelIdentityKey } from '../model-names';
 
 /** Fold the drift that does not change meaning: width, case, whitespace, punctuation, digit grouping. */
 export function foldText(text: string): string {
@@ -31,8 +32,7 @@ export function amounts(text: string): Set<string> {
   return out;
 }
 
-const modelKey = (m: string) => foldText(m).replace(/free$/, '');
-export function modelSet(models: readonly string[] = []): Set<string> { return new Set(models.map(modelKey).filter(Boolean)); }
+export function modelSet(models: readonly string[] = []): Set<string> { return new Set(models.map(modelIdentityKey).filter(Boolean)); }
 
 /** Character-bigram Jaccard similarity of two folded texts. */
 export function textSimilarity(a: string, b: string): number {

@@ -1,3 +1,4 @@
+import * as YMModels from '../src/shared/model-names';
 import * as YMMembership from '../src/shared/membership';
 import {readFileSync} from 'node:fs';
 import {createContext,runInContext} from 'node:vm';
@@ -6,7 +7,7 @@ import {describe,it,expect} from 'vitest';
 function fixture(){
  const {window,document}=parseHTML(`<html><body>${readFileSync('web/src/body.html','utf8')}</body></html>`);
  function Clock(...args:unknown[]){return Reflect.construct(Date,args.length?args:['2026-10-12T03:00:00Z']);}Object.setPrototypeOf(Clock,Date);Clock.prototype=Date.prototype;
- const context=createContext({YMMembership,structuredClone,window,document,console,Intl,Date:Clock,Map,Set,URL,URLSearchParams,matchMedia:()=>({matches:false,addEventListener(){}}),getComputedStyle:()=>({getPropertyValue:()=> '#123456'}),localStorage:{getItem:()=>null,setItem(){}},sessionStorage:{getItem:()=>null},MutationObserver:class{observe(){}},setTimeout,clearTimeout,setInterval(){},location:{hash:'#today'},navigator:{}});
+ const context=createContext({YMModels,YMMembership,structuredClone,window,document,console,Intl,Date:Clock,Map,Set,URL,URLSearchParams,matchMedia:()=>({matches:false,addEventListener(){}}),getComputedStyle:()=>({getPropertyValue:()=> '#123456'}),localStorage:{getItem:()=>null,setItem(){}},sessionStorage:{getItem:()=>null},MutationObserver:class{observe(){}},setTimeout,clearTimeout,setInterval(){},location:{hash:'#today'},navigator:{}});
  const app=readFileSync('web/src/app.js','utf8');runInContext(readFileSync('web/src/data.js','utf8')+'\n'+readFileSync('web/src/membership.js','utf8')+'\n'+app.slice(0,app.indexOf('(async function boot()')),context);
  const run=(s:string)=>runInContext(s,context);run("NOW=new Date('2026-10-12T03:00:00Z');T0=new Date(2026,9,12);");return {run,document};
 }

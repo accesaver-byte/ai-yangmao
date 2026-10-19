@@ -5,6 +5,13 @@ import type { EvidenceContext, VersionedEntity } from '../src/shared/identity/ty
 const entity=():VersionedEntity=>({id:'entity-1',platformId:'vendor',revision:1,publicationRevision:1,approvedVersionId:'version-1',terms:terms()});
 const context=(quote='Campaign signup-2026 grants 10 USD.'):EvidenceContext=>({observationId:'obs-1',fullText:quote,truncated:false,sourceVerified:true,quoteById:{'quote-1':quote}});
 function anchored(){const candidate=terms(),old=entity();candidate.occurrenceAnchor=known('signup-2026');old.terms!.occurrenceAnchor=known('signup-2026');return {candidate,old};}
+it('official model aliases are equivalent facts while sizes and modes remain conflicts',()=>{
+ const {candidate,old}=anchored();old.terms!.benefitPools[0].models=known(['GLM-5.3-Flash','Qwen3.8-27B']);
+ candidate.benefitPools[0].models=known(['glm-5-3-flash','Qwen/Qwen3.8-27B','GLM 5.3 Flash']);
+ expect(compareCandidate(candidate,old,context())).toMatchObject({relation:'SAME',termsRelation:'EQUIVALENT'});
+ candidate.benefitPools[0].models=known(['GLM-5.3-FlashX','Qwen3.8-35B']);
+ expect(compareCandidate(candidate,old,context()).relation).not.toBe('SAME');
+});
 it('A09 confirmed multilingual campaign with equivalent facts adds evidence without changing terms',()=>{
  const {candidate,old}=anchored();const proof=context('活动 signup-2026 注册赠送 10 美元。');
  expect(compareCandidate(candidate,old,proof)).toMatchObject({relation:'SAME',termsRelation:'EQUIVALENT',entityId:'entity-1'});

@@ -1,5 +1,6 @@
 import {liveStatus,isClaimable,activeOnDate,missingEvidence} from '../shared/lifecycle';
 import {z} from 'zod';
+import {normalizeModelNames} from '../shared/model-names';
 import type {offers} from '../db/schema';
 type PublicOffer=typeof offers.$inferSelect;
 type Snapshot={capturedAt:string;coverage?:Record<string,unknown>;offers:PublicOffer[];platforms:Array<{id:string;status:string;[k:string]:unknown}>};
@@ -24,7 +25,7 @@ export async function snapshotResponse(request:Request,assets:Fetcher):Promise<R
  if(path==='/api/meta')return response({...meta,lastSuccessfulCollect:null});
  if(path==='/api/coverage')return response({...meta,platforms:platforms.length,...(s.coverage??{sources:null,byKind:{},officialPages:[]}),lastSuccessfulCollect:null});
  const now=new Date();
- let rows=s.offers.filter(o=>o.reviewState==='approved'&&platforms.some(p=>p.id===o.platformId)).map(o=>{const {withdrawnReason:_reason,reviewMemo:_memo,reviewSuggestion:_suggestion,officialReview:_review,...pub}=o;return {...pub,status:liveStatus(o,now),missingEvidence:missingEvidence(o.evidence.excerpts)}});
+ let rows=s.offers.filter(o=>o.reviewState==='approved'&&platforms.some(p=>p.id===o.platformId)).map(o=>{const {withdrawnReason:_reason,reviewMemo:_memo,reviewSuggestion:_suggestion,officialReview:_review,...pub}=o;return {...pub,models:normalizeModelNames(o.models),status:liveStatus(o,now),missingEvidence:missingEvidence(o.evidence.excerpts)}});
  if(path.startsWith('/api/offers/')){const id=decodeURIComponent(path.slice('/api/offers/'.length));const offer=rows.find(o=>o.id===id);return offer?response({...meta,offer}):response({...meta,error:'快照中没有这条公开羊毛'},404);}
  const parsed=z.object({view:z.enum(['all','claimable']).default('claimable'),type:z.string().optional(),platform:z.string().optional(),modality:z.string().optional(),on:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),tz:z.string().default('Asia/Shanghai').refine(v=>{try{new Intl.DateTimeFormat('en',{timeZone:v});return true;}catch{return false;}})}).safeParse(Object.fromEntries(u.searchParams));
  if(!parsed.success)return response({...meta,error:'查询参数不正确'},400);

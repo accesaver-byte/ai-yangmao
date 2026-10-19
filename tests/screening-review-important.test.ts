@@ -1,3 +1,4 @@
+import * as YMModels from '../src/shared/model-names';
 import * as YMMembership from '../src/shared/membership';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
@@ -81,7 +82,7 @@ describe('screening review corrections', () => {
     document.querySelector('#main')!.innerHTML = '<div id="admBody"></div><div id="identity"></div>';
     window.scrollTo = () => {};
     const context = createContext({
-      YMMembership, structuredClone, crypto, window, document, console, Intl, Date, Map, Set, URL, URLSearchParams, Response, FormData,
+      YMModels, YMMembership, structuredClone, crypto, window, document, console, Intl, Date, Map, Set, URL, URLSearchParams, Response, FormData,
       location: { hash: '#admin' }, navigator: {}, getComputedStyle: () => ({ getPropertyValue: () => '' }),
       matchMedia: () => ({ matches: false, addEventListener() {} }), MutationObserver: class { observe() {} },
       localStorage: { getItem: () => null, setItem() {}, removeItem() {} }, sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },

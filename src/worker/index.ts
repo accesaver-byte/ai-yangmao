@@ -23,6 +23,7 @@ import { resetEventDay } from '../shared/reset-event';
 import { selectLeads } from '../shared/leads';
 import { changedOfficialTerms, changedOfficialBenefit, rejectedTermsStillPresent } from '../shared/review-stability';
 import { publicSafeValuation, valuationMatchesAmounts } from '../shared/valuation';
+import { normalizeModelNames } from '../shared/model-names';
 import { computeCollectedValuation, protectedValuationFields, valuationSourceSchema } from '../shared/valuation-intake';
 import { sourceFetchSchema } from '../shared/identity/fetch-evidence';
 import { isReviewField, reviewChanges } from '../shared/spec';
@@ -139,7 +140,7 @@ app.all('/api/mcp',c=>{let ctx:Pick<ExecutionContext,'waitUntil'>|undefined;try{
 const withStatus = (o: OfferRow, now: Date) => {
   const { reviewMemo: _memo, reviewSuggestion: _suggestion, officialReview: _officialReview, withdrawnReason: _withdrawnReason, valuation: rawValuation, ...pub } = o;
   const valuation = publicSafeValuation(rawValuation);
-  return { ...pub, valuation: valuation && valuationMatchesAmounts(valuation, o) ? valuation : null,
+  return { ...pub, models: normalizeModelNames(o.models), valuation: valuation && valuationMatchesAmounts(valuation, o) ? valuation : null,
     status: liveStatus(o, now), missingEvidence: missingEvidence(o.evidence.excerpts) };
 };
 

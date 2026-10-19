@@ -48,7 +48,7 @@ async function loadData({ fresh = false } = {}) {
   const stamp = Date.now();
   const get = async p => { const url = fresh ? `${p}${p.includes('?') ? '&' : '?'}fresh=${stamp}` : p; const r = await fetch(url, { ...(fresh ? { cache: 'no-store' } : {}), headers: { Accept: 'application/json' } }); if (!r.ok) throw new Error(`${p} ${r.status}`); return r.json(); };
   // A new response contract must not reuse a browser/CDN entry without valuation metadata.
-  const [pl, of, meta, cov, memberships] = await Promise.all([get('/api/platforms'), get('/api/offers?view=all&valuation=v2&schema=valuation-v2-public-inputs&lifecycle=approved-contract-v1'), get('/api/meta?schema=partial-fetch-v1'), get('/api/coverage?schema=partial-fetch-v1').catch(() => null), get('/api/memberships').catch(() => null)]);
+  const [pl, of, meta, cov, memberships] = await Promise.all([get('/api/platforms'), get('/api/offers?view=all&valuation=v2&schema=valuation-v2-public-inputs&lifecycle=approved-contract-v1&models=models-v1-2026-10-19'), get('/api/meta?schema=partial-fetch-v1'), get('/api/coverage?schema=partial-fetch-v1').catch(() => null), get('/api/memberships').catch(() => null)]);
   MEMBERSHIP_CATALOG_OK = !!memberships && Number.isInteger(memberships.revision) && Array.isArray(memberships.products) && Array.isArray(memberships.plans);
   if (MEMBERSHIP_CATALOG_OK) MEMBERSHIP_CATALOG = memberships;
   const now = Date.now(), DAYMS = 864e5;
@@ -71,7 +71,7 @@ async function loadData({ fresh = false } = {}) {
       verifiedAt: o.lastVerifiedAt, withdrawnAt: o.withdrawnAt,
       st: o.evidence.tier, tz: o.sourceTz, val: o.creditValidity || '官方未写明', aud: o.audience,
       cn: !overseas, early: CHANNEL[o.firstChannel] || o.firstChannel || '官方页面', why: o.withdrawnReason || '',
-      steps: o.steps || [], models: o.models || [], tags: o.tags || [], evidence: o.evidence, note: o.adminNote || '', verify: o.verifyResult || '', apiStatus: o.status,
+      steps: o.steps || [], models: YMModels.normalizeModelNames(o.models || []), tags: o.tags || [], evidence: o.evidence, note: o.adminNote || '', verify: o.verifyResult || '', apiStatus: o.status,
     };
   });
   META = meta;

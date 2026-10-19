@@ -1,3 +1,4 @@
+import * as YMModels from '../../src/shared/model-names';
 import * as YMMembership from '../../src/shared/membership';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
@@ -10,7 +11,7 @@ export function fixture(handle: (url: string, init?: RequestInit) => unknown | P
   window.scrollTo = () => {};
   const charts = new Map<string, any>();
   const storage = { getItem: () => null, setItem() {}, removeItem() {} };
-  const context = createContext({YMMembership, structuredClone, crypto, window, document, console, Intl, Date, Map, Set, URL, URLSearchParams, Response, FormData,
+  const context = createContext({YMModels,YMMembership, structuredClone, crypto, window, document, console, Intl, Date, Map, Set, URL, URLSearchParams, Response, FormData,
     location: { hash }, navigator: {}, getComputedStyle: () => ({ getPropertyValue: () => '#123456' }),
     matchMedia: () => ({ matches: false, addEventListener() {} }), MutationObserver: class { observe() {} },
     localStorage: storage, sessionStorage: storage, setTimeout, clearTimeout, setInterval() {},

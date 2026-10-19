@@ -1,4 +1,5 @@
 import {claimEndDerivationSchema,fillCampaignDeadline} from './campaign-deadline';
+import {normalizeModelNames} from './model-names';
 import {applyNetworkRequirements} from './network-requirements';
 import {valuationSourceSchema} from './valuation-intake';
 import {membershipSchema} from './membership';
@@ -50,7 +51,7 @@ export const offerIn = z.object({
   modalities: z.array(z.enum(['text', 'code', 'image', 'video', 'audio'])).min(1).transform(m => [...new Set(m.map(x => (x === 'code' ? 'text' : x)))] as ('text' | 'image' | 'video' | 'audio')[]),
   tags: z.array(z.enum(['reset', 'referral', 'discount', 'daily'])).max(8).default([]),
   // 免费可用的具体模型名（官方写法），没有就空数组
-  models: z.array(z.string().trim().min(1).max(80)).max(80).default([]),
+  models: z.array(z.string().trim().min(1).max(80)).max(80).default([]).transform(normalizeModelNames),
   claimMethod: z.enum(['auto', 'signup', 'app', 'form', 'topup', 'member', 'code']),
   requirements: z.array(z.string().regex(REQ)).min(1),
   membershipRequirement: membershipSchema.nullable().optional(),

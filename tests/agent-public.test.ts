@@ -17,6 +17,18 @@ function fixture(){
   return {f,env,fetcher};
 }
 describe('public agent HTTP and MCP',()=>{
+  it('shares canonical model labels between public list, detail, catalog and alias search',async()=>{
+    const {f,fetcher}=fixture();
+    f.sqlite.prepare('UPDATE offers SET models=? WHERE id=?').run(JSON.stringify(['GLM 5.3 Flash','glm-5-3-flash','OpenAI']),'public');
+    const list=await (await fetcher('https://ai-yangmao.com/api/offers?view=all')).json() as any;
+    expect(list.offers[0].models).toEqual(['GLM-5.3-Flash']);
+    const detail=await (await fetcher('https://ai-yangmao.com/api/agent/offers/public')).json() as any;
+    expect(detail.offer.models).toEqual(['GLM-5.3-Flash']);
+    const catalog=await (await fetcher('https://ai-yangmao.com/api/agent/catalog')).json() as any;
+    expect(catalog.models).toEqual(['GLM-5.3-Flash']);
+    const matches=await (await fetcher('https://ai-yangmao.com/api/agent/search?model=GLM-5.3-Flash')).json() as any;
+    expect(matches.total).toBe(1);
+  });
   it('uses current collection failures rather than an older successful run',async()=>{
     const {f,fetcher}=fixture();
     f.sqlite.prepare("INSERT INTO runs(kind,started_at,finished_at,ok,stats) VALUES('collect','2026-10-10','2026-10-10',1,'{}'),('sweep','2026-10-11','2026-10-11',0,'{\"fetchedSources\":2,\"coverageDegraded\":true}')").run();
