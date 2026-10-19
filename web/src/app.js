@@ -2207,6 +2207,7 @@ async function admQueue() {
   const sugCount = k => q.pending.filter(o => (o.suggestion?.verdict || 'none') === k).length;
   const sugTabs = [['all', '全部', q.pending.length], ['approve', '建议通过', sugCount('approve')], ['history', '建议作为历史', sugCount('history')], ['reject', '建议拒绝', sugCount('reject')], ['judge', '需要你判断', sugCount('judge')], ['none', '未标注', sugCount('none')]].filter(([k, , n]) => k === 'all' || n);
   box.innerHTML = `<section class="card" data-review-summary><b>活动待审 <span data-activity-count>${counts.activities}</span> 项</b> · 线索复核 ${counts.leadReview} 条<p class="small muted">活动待审包含系统补证和等待你决定；线索尚未形成活动。已下架或已标成历史的活动留在原决定里，不再排进这个队列。新线索 ${counts.newLeads??q.newLeads} 条。</p></section>
+    ${ADM.role==='admin'?'<section class="card" data-fast-track-review><h3>⚡ 快速上架待处理 · <span data-ft-count>…</span></h3><p class="small muted">这些权益已获你的上架授权，系统会自动补全并发布；需要核实的目录与受阻任务在这里处理。</p><div data-ft-jobs>正在读取…</div></section>':''}
     ${ADM.role==='admin'?'<p class="small muted" data-review-stats>正在统计最近 7 天谁在审核…</p>':''}
     ${ADM.role==='admin'?'<details data-intake-rules><summary>🚫 入口过滤规则（与 AI 无关、优惠券/购物券、中转站等线索一进来就关闭）</summary><div data-intake-body class="small muted">展开后读取…</div></details><details data-spot-check><summary>🔍 自动关闭抽查（最近 7 天，建议每周看一次）</summary><div data-spot-body class="small muted">展开后读取…</div></details>':''}
     ${q.leadTasks?.length?`<details data-lead-section><summary>线索复核 · ${counts.leadReview} 条</summary><p class="small muted">尚未形成条目的线索会自动读取原文、搜索官方出处并查重。暂时受阻会按时重试；需要判断的可在这里关联已有活动、结束线索或重新核验。</p>${q.leadTasks.slice(0,10).map(leadTaskCard).join('')}${q.leadTasks.length>10?`<details><summary>其余 ${q.leadTasks.length-10} 条线索复核</summary>${q.leadTasks.slice(10).map(leadTaskCard).join('')}</details>`:''}</details>`:''}
@@ -2217,6 +2218,7 @@ async function admQueue() {
     ${q.needsVerification?.length ? `<details data-stale-approved><summary>已批准 · 待核验 ${q.needsVerification.length} 项</summary><p class="small muted">以前的通过决定仍保留。这些活动暂不算当前可领：可能是官方原文改写、页面暂不可读，或距离上次成功核验过久。请核对官网后修订证据；不要重新批准原条目，也不要仅凭待核验判断已经结束。</p><div data-stale-body class="grid g2"></div><button type="button" class="btn sm" data-stale-more hidden>加载更多待核验活动</button></details>` : ''}
     <section data-activity-section><h3>活动待审</h3><p class="small muted">证据充分后再由你决定。系统补证、模型建议都不会自动通过上架。</p><h4>等待你决定 · ${readyCards.length} 项</h4><div class="grid g2">${readyCards.map(o=>card(o)).join('')||'<p class="small muted">当前没有资料齐备的活动需要你决定。</p>'}</div>${evidenceCards.length?`<details data-system-evidence open><summary>系统补证 / 补证受阻 · ${evidenceCards.length} 项</summary><div class="grid g2">${evidenceCards.map(o=>card(o)).join('')}</div></details>`:''}<div data-identity-slot></div></section>
     ${q.incomplete?.length ? `<section><details data-incomplete><summary style="cursor:pointer">${secH('已上架、字段待补', `${q.incomplete.length} 条：补齐后日历、时间线、按模型找、价值统计等栏目才完整`)}</summary><div class="grid g2" data-incomplete-body></div></details></section>` : ''}`;
+  const fastJobs=box.querySelector('[data-ft-jobs]');if(fastJobs)await loadFastTrackJobs(fastJobs);
   const identityBox=box.querySelector('[data-identity-slot]');identityBox.dataset.identityReview='';const remainingTasks=(identity.tasks||[]).filter(t=>!managedIds.has(t.id));if(remainingTasks.length||identity.error||identity.nextCursor)renderIdentityTasks(identityBox,{...identity,tasks:remainingTasks},false,managedIds);
   bindLeadTasks(box,q.leadTasks||[]);
   {const stats=box.querySelector('[data-review-stats]');if(stats)adm('/review-stats?days=7').then(r=>{stats.textContent=`最近 7 天 · 线索 ${r.leads.total}：系统处理 ${r.leads.system}、入口规则 ${r.leads.rule}、人工关闭 ${r.leads.owner}、待处理 ${r.leads.open} · 查重卡 ${r.identity.total}：你在网页 ${r.identity.web}、快速上架 ${r.identity.fastTrack}、代理/脚本 ${r.identity.agent}、系统 ${r.identity.system}、待处理 ${r.identity.open} · 免开卡：同页重读 ${r.avoided.sameSourceReread}、并入已有卡 ${r.avoided.groupedIntoOpenCard}`;}).catch(()=>{stats.remove();});}
@@ -2453,13 +2455,14 @@ function bindFastTrackForm(form, leadId, onDone, link = {}) {
     button.disabled = true;
     try {
       const r = await adm('/fast-track', body);
-      msg.textContent = `官方地址${r.registered.kind === 'existing' ? '已在白名单' : '已登记'}；${r.dispatched ? '已触发采集，模型读取后自动上架' : '下一轮采集读取后自动上架'}。进度见“补录”页的快速上架列表。`;
+      msg.textContent = `官方地址${r.registered.kind === 'existing' ? '已在白名单' : '已登记'}；${r.dispatched ? '已触发采集，模型读取后自动上架' : '下一轮采集读取后自动上架'}。进度见“待审”页顶部的“快速上架待处理”。`;
       form.reset(); sync(); if (form.membershipEditor) { member.open = false; form.membershipEditor = undefined; } onDone?.();
     } catch (err) { msg.textContent = err.message; } finally { button.disabled = false; }
   });
 }
 async function settleFastTrack(id, r) { for (let i = 0; r.state === 'publishing' && i < 8; i++) r = await adm(`/fast-track/${id}/advance`, {}); return r; }
 function fastTrackCompleteHtml(j) {
+  if(j.missing.includes('membershipCatalog')||j.catalogBlock||/会员产品未经核实|套餐未经核实/.test(j.error||''))return `<div data-ft-catalog-block><p class="small warn-note">会员目录资料尚未核实，重复抽取不会解决。核实产品与套餐资料后，系统会让模型重新选择；不需要重填本条的全部字段。</p>${(j.catalogBlock?.entries||[]).map(e=>`<p class="small">${esc(e.name)} · ${e.status==='retired'?'已停用':'待核实'} <a href="${esc(e.sourceUrl)}" target="_blank" rel="noopener">目录来源 ↗</a></p>`).join('')}<details data-ft-directory><summary>核实或补充会员目录</summary><div data-ft-catalog></div></details><button class="btn sm" type="button" data-ft-retry>目录已更新，让模型重新读取</button></div>`;
   const all = ['title', 'type', 'claimMethod', 'modalities', 'requirements', 'endKind', 'claimEnd', 'membershipRequirement'], need = new Set(j.missing.length ? [...j.missing, ...(j.missing.includes('endKind') ? ['claimEnd'] : [])] : all);
   const memberText = (j.requirements || []).filter(r => r.startsWith('member:')).map(r => r.slice(7));
   if (!memberText.length && !j.missing.includes('membershipRequirement')) need.delete('membershipRequirement');
@@ -2481,14 +2484,21 @@ async function loadFastTrackJobs(box) {
     let { jobs } = await adm('/fast-track');
     const paused = jobs.filter(j => j.state === 'needs_owner');
     if (paused.length) { await Promise.all(paused.map(j => adm(`/fast-track/${j.id}/reconcile`, {}).catch(() => null))); ({jobs} = await adm('/fast-track')); }
-    box.innerHTML = jobs.length ? jobs.map(j => `<div class="card" data-ft-job="${esc(j.id)}" style="margin:6px 0"><b>${esc(j.platformName)}</b> · ${esc(j.benefit)}
-      <p class="small">${esc(FT_STATE[j.state] || j.state)}${j.offerId ? ` · <a href="/#offer-${esc(j.offerId)}" target="_blank" rel="noopener">查看条目</a>` : ''}${j.leadId ? ` · 线索 #${j.leadId}` : ''} · <a href="${esc(j.url)}" target="_blank" rel="noopener">官方链接 ↗</a>${j.error ? ` · ${esc(j.error)}` : ''}${j.resolution?.reason ? ` · ${esc(j.resolution.reason)}` : ''}</p>
-      ${j.state === 'needs_owner' ? fastTrackCompleteHtml(j) : ''}${j.state === 'publishing' ? '<button class="btn sm" type="button" data-ft-advance>继续上架</button>' : ''}</div>`).join('') : '<p class="small muted">还没有快速上架任务。</p>';
+    if(!box.isConnected)return;
+    const pending=jobs.filter(j=>!['published','rejected'].includes(j.state)).sort((a,b)=>Number(b.state==='needs_owner')-Number(a.state==='needs_owner'));
+    const completed=jobs.filter(j=>['published','rejected'].includes(j.state));
+    const count=box.closest('[data-fast-track-review]')?.querySelector('[data-ft-count]');if(count)count.textContent=String(pending.length);
+    const card=j=>`<div class="card" data-ft-job="${esc(j.id)}" style="margin:6px 0"><b>${esc(j.platformName)}</b> · ${esc(j.benefit)}
+      <p class="small">${esc((j.missing.includes('membershipCatalog')||/会员产品未经核实|套餐未经核实/.test(j.error||''))?'会员目录待核实':FT_STATE[j.state]||j.state)}${j.offerId ? ` · <a href="/#offer-${esc(j.offerId)}" target="_blank" rel="noopener">查看条目</a>` : ''}${j.leadId ? ` · 线索 #${j.leadId}` : ''} · <a href="${esc(j.url)}" target="_blank" rel="noopener">官方链接 ↗</a>${j.error ? ` · ${esc(j.error)}` : ''}${j.resolution?.reason ? ` · ${esc(j.resolution.reason)}` : ''}</p>
+      ${j.state === 'needs_owner' ? fastTrackCompleteHtml(j) : ''}${j.state === 'publishing' ? '<button class="btn sm" type="button" data-ft-advance>继续上架</button>' : ''}</div>`;
+    box.innerHTML=(pending.length?pending.map(card).join(''):'<p class="small muted">没有未完成的快速上架任务。</p>')+(completed.length?`<details data-ft-completed><summary>已完成记录 · ${completed.length}</summary>${completed.map(card).join('')}</details>`:'');
     const job = card => jobs.find(j => j.id === card.dataset.ftJob), need = card => job(card)?.missing || [];
     box.querySelectorAll('[data-ft-job]').forEach(card => {
       const complete = card.querySelector('[data-ft-complete]');
       if (complete?.querySelector('[data-membership-editor]')) mountMembershipEditor(complete, { requirements: job(card).requirements || [] });
       const id = card.dataset.ftJob, done = r => { toast(r.state === 'published' ? '已上架' : r.state === 'needs_owner' ? (r.error || '还缺字段：' + (r.missing || []).map(k => FIELD_L[k] || k).join('、')) : '已提交'); loadFastTrackJobs(box); };
+      const directory=card.querySelector('[data-ft-directory]');
+      directory?.addEventListener('toggle',async()=>{if(!directory.open||directory.dataset.loaded)return;directory.dataset.loaded='1';const host=directory.querySelector('[data-ft-catalog]');try{MEMBERSHIP_CATALOG=await adm('/memberships');MEMBERSHIP_CATALOG_OK=true;const redraw=()=>{renderMembershipCatalog(host,redraw);adm(`/fast-track/${id}/reconcile`,{}).then(r=>{if(r.state==='queued'||r.state==='published')done(r);}).catch(error=>toast(error.message));};renderMembershipCatalog(host,redraw);}catch(error){host.textContent=error.message;directory.dataset.loaded='';}});
       card.querySelector('[data-ft-complete]')?.addEventListener('submit', async e => {
         e.preventDefault(); const form = e.currentTarget, fd = new FormData(form), fields = {};
         for (const key of ['title', 'type', 'claimMethod', 'endKind', 'claimEnd']) if (fd.get(key)) fields[key] = String(fd.get(key)).trim();
@@ -2514,10 +2524,8 @@ async function admManual() {
     <label class="field">级别<select name="tier"><option value="site">官网页面</option><option value="docs">官方文档</option><option value="official">官方账号（博客、公众号、X）</option><option value="staff">员工账号</option></select></label><button class="btn pri" type="submit">加入信源</button></form>`;
   $('#admSrc select[name="platformId"]').addEventListener('focus', refreshAdminPlatforms);
   if (ADM.role === 'admin') {
-    $('#admAdd').insertAdjacentHTML('beforebegin', fastTrackFormHtml() + '<section id="admFastJobs" class="card" style="max-width:640px;margin:12px 0"><b>快速上架进度</b><div data-ft-jobs class="small muted">正在读取…</div></section>');
-    const jobsBox = $('#admFastJobs [data-ft-jobs]');
-    bindFastTrackForm($('#admBody [data-fast-track]'), null, () => loadFastTrackJobs(jobsBox));
-    loadFastTrackJobs(jobsBox);
+    $('#admAdd').insertAdjacentHTML('beforebegin', fastTrackFormHtml()+'<p class="small muted">快速上架进度和受阻任务统一在「待审 → 快速上架待处理」查看。</p>');
+    bindFastTrackForm($('#admBody [data-fast-track]'),null,()=>{ADM.tab='queue';render(true);});
   }
   $('#admSrc').insertAdjacentHTML('afterend', `<section id="admDiscord" class="card" style="display:flex;flex-direction:column;gap:10px;max-width:640px;margin-top:12px"><p class="sub" style="margin:0">Discord 频道：你在自己的服务器关注了厂商公告频道后，在这里把它登记到对应平台，之后它的公告才会成为线索。未登记的频道会被跳过并列在下面。</p><div data-discord-unmapped class="small muted">正在读取未登记频道…</div>
     <form data-discord-manual style="display:flex;flex-direction:column;gap:8px"><label class="field">平台<select name="platformId" required>${adminPlatformOptions()}</select></label><label class="field">频道链接<input name="link" required placeholder="https://discord.com/channels/服务器编号/频道编号"></label><label class="field">名称<input name="name" required placeholder="比如：Higgsfield AI #announcements"></label><button class="btn pri" type="submit">登记 Discord 频道</button></form></section>`);

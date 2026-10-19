@@ -355,3 +355,31 @@ it('exposes replay input read-only and rejects tampered reviewed fields before i
  expect(input.body.fields.modalities).toEqual(['image']);
  expect(f.sqlite.prepare('SELECT * FROM fast_track_jobs WHERE id=?').get(created.body.jobId)).toEqual(before);
 });
+
+it('pauses for a pending membership catalog after one extraction and automatically resumes when verified',async()=>{
+ const pending=structuredClone(catalog);pending.products[0].status='pending' as any;
+ f.sqlite.prepare('UPDATE membership_catalog SET revision=1,data_json=? WHERE id=1').run(JSON.stringify(pending));
+ const created=await call('admin/fast-track',{newPlatform:{name:'Odyssey'},url:'https://odyssey.world/introducing-odyssey-3',benefit:'Odyssey Pro 会员免费体验'});
+ await ingest(`fast-track/${created.body.jobId}/claim`,{});
+ const paused=await ingest(`fast-track/${created.body.jobId}/result`,{fields:{...memberPerk,membershipRequirement:proMembership(1)},sourceText:page});
+ expect(paused.body).toMatchObject({state:'needs_owner',missing:['membershipCatalog']});
+ expect((await ingest('fast-track/queue')).body.jobs).toEqual([]);
+ f.sqlite.prepare('UPDATE membership_catalog SET revision=2,data_json=? WHERE id=1').run(JSON.stringify(catalog));
+ expect((await ingest('fast-track/queue')).body.jobs).toEqual([{id:created.body.jobId,publishing:false}]);
+ await ingest(`fast-track/${created.body.jobId}/claim`,{});
+ const done=await settle(created.body.jobId,await ingest(`fast-track/${created.body.jobId}/result`,{fields:{...memberPerk,membershipRequirement:proMembership(2)},sourceText:page}));
+ expect(done.body.state).toBe('published');
+});
+
+it('does not wake a catalog-blocked job on an unrelated directory edit or silently replace owner-selected membership',async()=>{
+ const pending=structuredClone(catalog);pending.products[0].status='pending' as any;
+ f.sqlite.prepare('UPDATE membership_catalog SET revision=1,data_json=? WHERE id=1').run(JSON.stringify(pending));
+ const created=await call('admin/fast-track',{newPlatform:{name:'Odyssey'},url:'https://odyssey.world/introducing-odyssey-3',benefit:'Odyssey Pro 会员免费体验'});
+ await ingest(`fast-track/${created.body.jobId}/claim`,{});
+ await ingest(`fast-track/${created.body.jobId}/result`,{fields:{...memberPerk,membershipRequirement:proMembership(1)},sourceText:page});
+ f.sqlite.prepare('UPDATE membership_catalog SET revision=2 WHERE id=1').run();
+ expect((await ingest('fast-track/queue')).body.jobs).toEqual([]);
+ f.sqlite.prepare('UPDATE membership_catalog SET revision=3,data_json=? WHERE id=1').run(JSON.stringify(catalog));
+ f.sqlite.prepare('UPDATE fast_track_jobs SET owner_fields_json=? WHERE id=?').run(JSON.stringify({membershipRequirement:proMembership(1)}),created.body.jobId);
+ expect((await ingest('fast-track/queue')).body.jobs).toEqual([]);
+});
