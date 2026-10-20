@@ -1804,7 +1804,7 @@ function pAdmin(focusId) {
   const reviewer = ADM.role === 'reviewer';
   const tabs = reviewer ? [['queue', '待审'], ['leads', '线索'], ['manual', '补录']] : [['queue', '待审'], ['quality', '准确率'], ['leads', '线索'], ['manual', '补录'], ['health', '采集健康']];
   if (!tabs.some(([k]) => k === ADM.tab)) ADM.tab = 'queue';
-  main().innerHTML = ribbon() + ph('后台', `${reviewer ? `审核员：${esc(ADM.who)}。` : ''}审核、编辑、补录。每条都附来源链接和官方原文，点链接核对后再决定。`, `<button class="btn sm" type="button" id="admOut">退出登录</button>`) + `
+  main().innerHTML = ph('审核工作台', reviewer ? `审核员：${esc(ADM.who)}` : '', `<button class="btn sm" type="button" id="admOut">退出登录</button>`) + `
   <div class="seg" role="tablist" style="margin-bottom:14px">${tabs.map(([k, l]) => `<button type="button" data-admtab="${k}" aria-pressed="${ADM.tab === k}">${l}</button>`).join('')}</div>
   <div id="admBody">${emptySheep('加载中…')}</div>`;
   $('#admOut').addEventListener('click', () => { ADM.token = ''; ADM.role = ''; ADM.who = ''; admStore.clear(); render(true); });
@@ -1890,7 +1890,7 @@ function identityFactsTable(previous,current){
  return `<div style="overflow:auto"><table class="small"><thead><tr><th>关键事实</th><th>${previous?'已批准':'无已批准版本'}</th><th>本次待审</th></tr></thead><tbody>${Object.keys(current||{}).filter(k=>k!=='schemaVersion').map(k=>`<tr><th>${esc(names[k]||k)}</th><td style="white-space:pre-wrap">${esc(show(previous?.[k]))}</td><td style="white-space:pre-wrap">${esc(show(current[k]))}</td></tr>`).join('')}</tbody></table></div>`;
 }
 function renderIdentityTasks(box,data,append=false,managedIds=new Set()){
- if(!append)box.innerHTML='<h4>权益活动查重</h4><p class="small muted">先核对发放方、领取机制和历史活动；资料不完整时请等待系统继续核查，判断不会直接上架。</p>'+(data.error?`<p role="alert">${esc(data.error)}，请刷新重试。</p>`:'');
+ if(!append)box.innerHTML='<div class="review-group-label">权益查重</div>'+(data.error?`<p role="alert">${esc(data.error)}，请刷新重试。</p>`:'');
  for(const t of data.tasks||[]){
  if(managedIds.has(t.id))continue;
  const card=document.createElement('article');card.className='card';card.dataset.identityTask=t.id;card.dataset.offerId=t.entity?.canonical_offer_id||'';card.style.marginBottom='14px';
@@ -1924,6 +1924,7 @@ function renderIdentityTasks(box,data,append=false,managedIds=new Set()){
  <div data-identity-preview hidden></div><p role="status" data-identity-feedback></p>
  ${ADM.role==='admin'?`<details style="margin-top:8px" data-identity-fast-track><summary>⚡ 快速上架（我已确认官方或亲测）</summary><p class="small muted">上架后本查重任务按“与新条目重复”自动结案。</p>${fastTrackFormHtml({inline:true,platformId:t.candidateDisplay?.platformId||t.display?.platformId||'',url:t.candidateDisplay?.evidenceUrl||t.sources?.[0]?.final_url||t.display?.evidence?.url||'',benefit:String(t.candidateDisplay?.valueText||t.display?.valueText||t.candidateDisplay?.title||'').slice(0,500),title:String(t.candidateDisplay?.title||t.display?.title||'').slice(0,120)})}</details>`:''}`;
  box.append(card);
+ if(box.closest('.review-workspace'))compactReviewCard(card,{title:t.display?.title||t.candidateDisplay?.title||'活动查重',value:t.display?.valueText||t.candidateDisplay?.valueText,status:!canDecide?'系统核查中':'查重待决',action:'核对活动',url:t.sources?.[0]?.final_url,facts:[['待处理',t.reviewPreparation?.reason],['来源数量',String(t.sources?.length||0)]]});
  {const fast=card.querySelector('[data-identity-fast-track] [data-fast-track]');if(fast)bindFastTrackForm(fast,null,()=>{card.dataset.resolved='1';},{identityTaskId:t.id});}
  card.querySelectorAll('[data-identity-hint]').forEach(button=>button.addEventListener('click',async()=>{
   const reason=card.querySelector('[data-identity-reason]').value.trim(),feedback=card.querySelector('[data-identity-feedback]');
@@ -1932,7 +1933,7 @@ function renderIdentityTasks(box,data,append=false,managedIds=new Set()){
   const duplicate=button.dataset.identityHint==='suspected_duplicate',category=duplicate?'duplicate':card.querySelector('[data-identity-category]')?.value||'';
   if(!category){feedback.textContent='请先在“拒绝类别”选择原因';return;}
   button.disabled=true;
-  try{await adm('/identity/tasks/'+encodeURIComponent(t.id)+'/resolve',{action:'reject',requestId:'ui-identity-close-'+Date.now()+'-'+Math.random().toString(36).slice(2),expectedRevision:t.revision,reasonCategory:category,reason:(duplicate?'管理员确认重复：':'管理员结案：')+reason});feedback.textContent='已结案：整张卡按'+(REASON_LABEL[category]||category)+'拒绝，不会上架。';card.querySelectorAll('button,input,select').forEach(b=>b.disabled=true);card.style.opacity=.5;}
+  try{await adm('/identity/tasks/'+encodeURIComponent(t.id)+'/resolve',{action:'reject',requestId:'ui-identity-close-'+Date.now()+'-'+Math.random().toString(36).slice(2),expectedRevision:t.revision,reasonCategory:category,reason:(duplicate?'管理员确认重复：':'管理员结案：')+reason});feedback.textContent='已结案：整张卡按'+(REASON_LABEL[category]||category)+'拒绝，不会上架。';card.querySelectorAll('button:not([data-review-close]):not([data-review-open]),input,select').forEach(b=>b.disabled=true);card.style.opacity=.5;}
   catch(error){feedback.textContent=error.message;button.disabled=false;}
  }));
  card.querySelector('[data-identity-prepare-now]')?.addEventListener('click',async event=>{
@@ -1985,7 +1986,7 @@ function renderIdentityTasks(box,data,append=false,managedIds=new Set()){
    }
   }
   const preview=card.querySelector('[data-identity-preview]');preview.hidden=false;preview.innerHTML=`<p>将按当前审核版本 ${t.revision} ${action==='approve'?'确认通过，发布本次条款':action==='reject'?earlyReject?'拒绝此单个候选并保留审计记录；不会合并旧活动或上架':'确认拒绝本次候选，保留历史决定':action==='same_claim'?'确认与原拒绝主张对应；复用原拒绝，符合补证规则时保持待审':'确认活动身份，保留待审状态'}。</p><button class="btn pri" data-identity-confirm>✅ 确认提交${action==='approve'?'通过':action==='reject'?'拒绝':'身份判断'}</button>`;preview.style.border='1px solid var(--pri,#f5c518)';preview.style.padding='8px';preview.style.borderRadius='8px';preview.scrollIntoView?.({block:'center',behavior:'smooth'});
-  preview.querySelector('button').addEventListener('click',async event=>{const confirmButton=event.currentTarget;confirmButton.disabled=true;try{const result=await adm('/identity/tasks/'+encodeURIComponent(t.id)+'/resolve',payload);if(result.outcome==='deferred'&&result.retryable){feedback.textContent='历史决定尚未检查完，请继续检查；当前任务仍保持待审。';confirmButton.textContent='继续检查';confirmButton.disabled=false;return;}feedback.textContent='决定已保存';card.querySelectorAll('button,input,select').forEach(b=>b.disabled=true);
+  preview.querySelector('button').addEventListener('click',async event=>{const confirmButton=event.currentTarget;confirmButton.disabled=true;try{const result=await adm('/identity/tasks/'+encodeURIComponent(t.id)+'/resolve',payload);if(result.outcome==='deferred'&&result.retryable){feedback.textContent='历史决定尚未检查完，请继续检查；当前任务仍保持待审。';confirmButton.textContent='继续检查';confirmButton.disabled=false;return;}feedback.textContent='决定已保存';card.querySelectorAll('button:not([data-review-close]):not([data-review-open]),input,select').forEach(b=>b.disabled=true);
    // Grouped card: the decision applies to the chosen source; the other reports of the same perk close as its duplicates in one call.
    const others=['same','new','distinct'].includes(action)?(t.sources||[]).filter(x=>x.candidateId!==payload.candidateId):[];
    if(others.length){try{await adm('/identity/tasks/'+encodeURIComponent(t.id)+'/resolve',{action:'reject',requestId:'ui-group-'+Date.now()+'-'+Math.random().toString(36).slice(2),expectedRevision:t.revision+1,reasonCategory:'duplicate',reason:`同组其余 ${others.length} 条来源与本次处理的来源为同一活动${result.canonicalOfferId?'（'+result.canonicalOfferId+'）':''}`});feedback.textContent=`决定已保存；同组其余 ${others.length} 条来源已按重复一并结案`;}catch(error){feedback.textContent=`决定已保存；同组其余 ${others.length} 条未能一并结案（${error.message}），请刷新后处理`;}}
@@ -2193,6 +2194,62 @@ async function openOnlineEdit(button) {
   finally { button.disabled = false; }
 }
 document.addEventListener('click', e => { const button = e.target.closest?.('[data-online-edit]'); if (button) openOnlineEdit(button); });
+/* Queue cards keep their original form nodes and handlers inside a native dialog.
+ * Switching workspaces only hides panels; it never reconstructs an unsaved draft. */
+function compactReviewCard(card, info) {
+  if(card.querySelector('[data-review-dialog]'))return;
+  card.classList.add('review-tile');
+  const dialog=document.createElement('dialog');dialog.className='review-dialog';dialog.dataset.reviewDialog='';dialog.setAttribute('aria-label',info.title||'审核详情');
+  const top=document.createElement('div');top.className='review-dialog-bar';
+  top.innerHTML=`<strong>${esc(info.action||'审核详情')}</strong><button type="button" class="btn sm" data-review-close aria-label="关闭详情">关闭</button>`;
+  dialog.append(top);
+  const body=document.createElement('div');body.className='review-dialog-body';
+  while(card.firstChild)body.append(card.firstChild);
+  dialog.append(body);
+  card.innerHTML=`<div class="review-tile-meta"><span>${esc(info.platform||'')}</span><span class="review-state">${esc(info.status||'待处理')}</span></div><h3 class="review-tile-title">${esc(info.title||'待处理条目')}</h3>${info.value?`<p class="review-tile-value">${esc(info.value)}</p>`:''}<dl class="review-tile-facts">${(info.facts||[]).filter(([,value])=>value).map(([label,value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl><div class="review-tile-actions"><button type="button" class="btn review-primary" data-review-open>${esc(info.action||'审核详情')}</button>${info.url?`<a class="btn" href="${esc(info.url)}" target="_blank" rel="noopener">查看来源</a>`:''}</div>`;
+  card.append(dialog);
+  const opener=card.querySelector('[data-review-open]');
+  opener.addEventListener('click',()=>{if(dialog.showModal)dialog.showModal();else dialog.setAttribute('open','');});
+  dialog.querySelector('[data-review-close]').addEventListener('click',()=>{if(dialog.close)dialog.close();else dialog.removeAttribute('open');opener.focus?.();});
+}
+function compactOfferCards(scope, find) {
+  scope.querySelectorAll('[data-code]').forEach(card=>{
+    const o=find(card.dataset.code,card.dataset.live==='1',card.dataset.taskId);if(!o)return;
+    compactReviewCard(card,{title:o.title,platform:o.platform,value:o.value,url:o.evidenceUrl,
+      status:card.dataset.live==='1'?(o.status==='stale'?'已批准 · 待核验':'已上架'):o.pendingUpdate?'条款更新待审':o.preparation?.label||'等待决定',
+      action:card.dataset.live==='1'?'补齐字段':'审核详情',facts:[['领取条件',(o.requirements||[]).map(reqLabel).join('、')],['领取期限',o.end],['证据',TIER_L[o.evidenceTier]||o.evidenceTier],...(o.preparation?.reason?[['待处理',o.preparation.reason]]:[])]});
+  });
+}
+function reviewWorkspace(box, q, counts) {
+  box.classList.add('review-workspace');
+  const specs=[...(ADM.role==='admin'?[['fast','⚡ 快速上架','…']]:[]),['activities','权益审核',counts.activities],['leads','线索复核',counts.leadReview],['live','已上架、字段待补',(q.incomplete||[]).length]];
+  const nav=document.createElement('nav');nav.className='review-workspaces';nav.dataset.reviewSummary='';nav.setAttribute('role','tablist');nav.setAttribute('aria-label','审核环节');
+  nav.innerHTML=specs.map(([key,label,count])=>`<button type="button" role="tab" id="review-tab-${key}" aria-controls="review-pane-${key}" data-review-tab="${key}" class="review-tone-${key}">${label} <span ${key==='activities'?'data-activity-count':key==='fast'?'data-ft-count':''}>${count}</span></button>`).join('');
+  box.querySelector('[data-review-summary]')?.remove();box.prepend(nav);
+  const panels={};
+  for(const [key,label] of specs){const panel=document.createElement('section');panel.className=`review-pane review-tone-${key}`;panel.dataset.reviewPane=key;panel.hidden=true;panel.id='review-pane-'+key;panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby','review-tab-'+key);panel.innerHTML=`<h2 class="review-workspace-title">${label}</h2>`;panels[key]=panel;box.append(panel);}
+  const move=(selector,key)=>box.querySelectorAll(selector).forEach(node=>panels[key]?.append(node));
+  move('[data-fast-track-review]','fast');move('[data-activity-section]','activities');move('[data-lead-section], [data-priority-section]','leads');move('[data-live-section], [data-stale-approved]','live');
+  const suggestions=box.querySelector('[data-sugtab]')?.parentElement;if(suggestions)panels.activities.insertBefore(suggestions,panels.activities.querySelector('[data-activity-section]'));
+  const tools=document.createElement('details');tools.className='review-tools';tools.innerHTML='<summary>辅助管理</summary><div class="review-tools-body"></div>';
+  box.querySelectorAll('[data-review-stats], [data-intake-rules], [data-spot-check], [data-platform-section], [data-autopublish-section]').forEach(node=>tools.lastElementChild.append(node));box.append(tools);
+  for(const key of ['fast','leads','live'])if(panels[key]&&panels[key].children.length===1)panels[key].insertAdjacentHTML('beforeend','<p class="muted">暂无待处理事项</p>');
+  if(panels.fast){
+    const add=document.createElement('details');add.className='review-fast-add';add.innerHTML='<summary>⚡ 新增快速上架</summary>';
+    panels.fast.insertBefore(add,panels.fast.children[1]);
+    add.addEventListener('toggle',()=>{if(!add.open||add.querySelector('[data-fast-track]'))return;add.insertAdjacentHTML('beforeend',fastTrackFormHtml());bindFastTrackForm(add.querySelector('[data-fast-track]'),null,admQueue);});
+  }
+  const select=key=>{
+    if(!panels[key])key='activities';ADM.workspace=key;
+    Object.entries(panels).forEach(([name,panel])=>{panel.hidden=name!==key;});
+    nav.querySelectorAll('[data-review-tab]').forEach(button=>{const active=button.dataset.reviewTab===key;button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;});
+    if(key==='live'){const details=panels.live.querySelector('[data-incomplete]');if(details&&!details.open){details.open=true;details.dispatchEvent(new window.Event('toggle'));}}
+  };
+  nav.querySelectorAll('[data-review-tab]').forEach(button=>button.addEventListener('click',()=>select(button.dataset.reviewTab)));
+  nav.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const buttons=[...nav.querySelectorAll('button')],index=buttons.indexOf(event.target);const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+(event.key==='ArrowRight'?1:-1)+buttons.length)%buttons.length;select(buttons[next].dataset.reviewTab);buttons[next].focus();});
+  return select;
+}
+
 async function admQueue() {
   const box = $('#admBody');
   const [q,identity] = await Promise.all([adm('/queue'),adm('/identity/tasks').catch(error=>({tasks:[],error:error.message})),refreshAdminPlatforms()]);
@@ -2205,21 +2262,23 @@ async function admQueue() {
   const card = adminCard;
   const sugCount = k => q.pending.filter(o => (o.suggestion?.verdict || 'none') === k).length;
   const sugTabs = [['all', '全部', q.pending.length], ['approve', '建议通过', sugCount('approve')], ['history', '建议作为历史', sugCount('history')], ['reject', '建议拒绝', sugCount('reject')], ['judge', '需要你判断', sugCount('judge')], ['none', '未标注', sugCount('none')]].filter(([k, , n]) => k === 'all' || n);
-  box.innerHTML = `<section class="card" data-review-summary><b>活动待审 <span data-activity-count>${counts.activities}</span> 项</b> · 线索复核 ${counts.leadReview} 条<p class="small muted">活动待审包含系统补证和等待你决定；线索尚未形成活动。已下架或已标成历史的活动留在原决定里，不再排进这个队列。新线索 ${counts.newLeads??q.newLeads} 条。</p></section>
-    ${ADM.role==='admin'?'<section class="card" data-fast-track-review><h3>⚡ 快速上架待处理 · <span data-ft-count>…</span></h3><p class="small muted">这些权益已获你的上架授权，系统会自动补全并发布；需要核实的目录与受阻任务在这里处理。</p><div data-ft-jobs>正在读取…</div></section>':''}
+  box.innerHTML = `<section class="card" data-review-summary><b>权益审核 <span data-activity-count>${counts.activities}</span> 项</b> · 线索复核 ${counts.leadReview} 条<p class="small muted">权益审核包含系统补证和等待你决定；线索尚未形成活动。已下架或已标成历史的活动留在原决定里，不再排进这个队列。新线索 ${counts.newLeads??q.newLeads} 条。</p></section>
+    ${ADM.role==='admin'?'<section data-fast-track-review><div data-ft-jobs>正在读取…</div></section>':''}
     ${ADM.role==='admin'?'<p class="small muted" data-review-stats>正在统计最近 7 天谁在审核…</p>':''}
     ${ADM.role==='admin'?'<details data-intake-rules><summary>🚫 入口过滤规则（与 AI 无关、优惠券/购物券、中转站等线索一进来就关闭）</summary><div data-intake-body class="small muted">展开后读取…</div></details><details data-spot-check><summary>🔍 自动关闭抽查（最近 7 天，建议每周看一次）</summary><div data-spot-body class="small muted">展开后读取…</div></details>':''}
-    ${q.leadTasks?.length?`<details data-lead-section><summary>线索复核 · ${counts.leadReview} 条</summary><p class="small muted">尚未形成条目的线索会自动读取原文、搜索官方出处并查重。暂时受阻会按时重试；需要判断的可在这里关联已有活动、结束线索或重新核验。</p>${q.leadTasks.slice(0,10).map(leadTaskCard).join('')}${q.leadTasks.length>10?`<details><summary>其余 ${q.leadTasks.length-10} 条线索复核</summary>${q.leadTasks.slice(10).map(leadTaskCard).join('')}</details>`:''}</details>`:''}
-    ${q.priorityLeads?.filter(l=>l.status==='new').length?`<section><h3>重要新线索 · 等待研判</h3>${q.priorityLeads.filter(l=>l.status==='new').map(l=>`<div data-priority-lead="${l.id}"><p>#${l.id} ${esc(l.title||'')} · 将在下一轮研判</p>${ADM.role==='admin'?`<details style="margin:0 0 8px"><summary class="small">⚡ 快速上架（我已确认官方或亲测）</summary>${fastTrackFormHtml({inline:true,benefit:String(l.title||'').slice(0,500),url:l.url||''})}</details>`:''}</div>`).join('')}</section>`:''}
+    ${q.leadTasks?.length?`<details data-lead-section open><summary>待复核 · ${counts.leadReview} 条</summary>${q.leadTasks.slice(0,10).map(leadTaskCard).join('')}${q.leadTasks.length>10?`<details><summary>其余 ${q.leadTasks.length-10} 条线索复核</summary>${q.leadTasks.slice(10).map(leadTaskCard).join('')}</details>`:''}</details>`:''}
+    ${q.priorityLeads?.filter(l=>l.status==='new').length?`<section data-priority-section><h3>重要新线索</h3>${q.priorityLeads.filter(l=>l.status==='new').map(l=>`<div data-priority-lead="${l.id}"><p>#${l.id} ${esc(l.title||'')} · 将在下一轮研判</p>${ADM.role==='admin'?`<details style="margin:0 0 8px"><summary class="small">⚡ 快速上架（我已确认官方或亲测）</summary>${fastTrackFormHtml({inline:true,benefit:String(l.title||'').slice(0,500),url:l.url||''})}</details>`:''}</div>`).join('')}</section>`:''}
     ${sugTabs.length > 2 ? `<div class="seg" role="tablist" style="margin-bottom:12px;flex-wrap:wrap">${sugTabs.map(([k, l, n]) => `<button type="button" data-sugtab="${k}" aria-pressed="${(ADM.sug || 'all') === k}">${l} ${n}</button>`).join('')}</div>` : ''}
-    ${q.pendingPlatforms.length ? `<div class="card" style="margin-bottom:12px"><h3>新平台待准入</h3>${q.pendingPlatforms.map(p => `<div class="row" style="justify-content:space-between;padding:6px 0"><span>${esc(p.name)}（${esc(p.id)}）${p.site ? ` · <a href="${esc(p.site)}" target="_blank" rel="noopener">官网</a>` : ''}</span><span class="row"><button class="btn sm good" data-plat="${p.id}:approve">准入</button><button class="btn sm bad" data-plat="${p.id}:reject">拒绝</button></span></div>`).join('')}</div>` : ''}
-    ${q.suggestAutoPublish.map(x => `<div class="card" style="margin-bottom:12px"><span class="st warn"><b>!</b>建议放开</span> 信源 ${esc(x.id)} 已连续原样通过 ${x.cleanStreak} 条 <button class="btn sm" data-autopub="${x.id}">放开自动上架</button></div>`).join('')}
-    ${q.needsVerification?.length ? `<details data-stale-approved><summary>已批准 · 待核验 ${q.needsVerification.length} 项</summary><p class="small muted">以前的通过决定仍保留。这些活动暂不算当前可领：可能是官方原文改写、页面暂不可读，或距离上次成功核验过久。请核对官网后修订证据；不要重新批准原条目，也不要仅凭待核验判断已经结束。</p><div data-stale-body class="grid g2"></div><button type="button" class="btn sm" data-stale-more hidden>加载更多待核验活动</button></details>` : ''}
-    <section data-activity-section><h3>活动待审</h3><p class="small muted">证据充分后再由你决定。系统补证、模型建议都不会自动通过上架。</p><h4>等待你决定 · ${readyCards.length} 项</h4><div class="grid g2">${readyCards.map(o=>card(o)).join('')||'<p class="small muted">当前没有资料齐备的活动需要你决定。</p>'}</div>${evidenceCards.length?`<details data-system-evidence open><summary>系统补证 / 补证受阻 · ${evidenceCards.length} 项</summary><div class="grid g2">${evidenceCards.map(o=>card(o)).join('')}</div></details>`:''}<div data-identity-slot></div></section>
-    ${q.incomplete?.length ? `<section><details data-incomplete><summary style="cursor:pointer">${secH('已上架、字段待补', `${q.incomplete.length} 条：补齐后日历、时间线、按模型找、价值统计等栏目才完整`)}</summary><div class="grid g2" data-incomplete-body></div></details></section>` : ''}`;
+    ${q.pendingPlatforms.length ? `<div class="card" data-platform-section style="margin-bottom:12px"><h3>新平台待准入</h3>${q.pendingPlatforms.map(p => `<div class="row" style="justify-content:space-between;padding:6px 0"><span>${esc(p.name)}（${esc(p.id)}）${p.site ? ` · <a href="${esc(p.site)}" target="_blank" rel="noopener">官网</a>` : ''}</span><span class="row"><button class="btn sm good" data-plat="${p.id}:approve">准入</button><button class="btn sm bad" data-plat="${p.id}:reject">拒绝</button></span></div>`).join('')}</div>` : ''}
+    ${q.suggestAutoPublish.map(x => `<div class="card" data-autopublish-section style="margin-bottom:12px"><span class="st warn"><b>!</b>建议放开</span> 信源 ${esc(x.id)} 已连续原样通过 ${x.cleanStreak} 条 <button class="btn sm" data-autopub="${x.id}">放开自动上架</button></div>`).join('')}
+    ${q.needsVerification?.length ? `<details data-stale-approved><summary>已批准 · 待核验 ${q.needsVerification.length} 项</summary><div data-stale-body class="grid g2"></div><button type="button" class="btn sm" data-stale-more hidden>加载更多待核验活动</button></details>` : ''}
+    <section data-activity-section><div class="review-group-label">等待你决定 · ${readyCards.length} 项</div><div class="grid g2">${readyCards.map(o=>card(o)).join('')||'<p class="small muted">当前没有资料齐备的活动需要你决定。</p>'}</div>${evidenceCards.length?`<details data-system-evidence open><summary>系统补证 / 补证受阻 · ${evidenceCards.length} 项</summary><div class="grid g2">${evidenceCards.map(o=>card(o)).join('')}</div></details>`:''}<div data-identity-slot></div></section>
+    ${q.incomplete?.length ? `<section data-live-section><details data-incomplete><summary style="cursor:pointer">字段待补 · ${q.incomplete.length}</summary><div class="grid g2" data-incomplete-body></div></details></section>` : ''}`;
+  const selectWorkspace=reviewWorkspace(box,q,counts);
   const fastJobs=box.querySelector('[data-ft-jobs]');if(fastJobs)await loadFastTrackJobs(fastJobs);
   const identityBox=box.querySelector('[data-identity-slot]');identityBox.dataset.identityReview='';const remainingTasks=(identity.tasks||[]).filter(t=>!managedIds.has(t.id));if(remainingTasks.length||identity.error||identity.nextCursor)renderIdentityTasks(identityBox,{...identity,tasks:remainingTasks},false,managedIds);
   bindLeadTasks(box,q.leadTasks||[]);
+  box.querySelectorAll('[data-lead-task]').forEach(card=>{const l=q.leadTasks.find(l=>String(l.id)===card.dataset.leadTask);compactReviewCard(card,{title:l.title,url:l.url,status:({checking:'核验中',retry:'等待重试',manual:'需要判断'})[l.resolution?.status]||'待复核',action:'复核线索',facts:[['待处理',l.note],['下次重试',l.resolution?.nextAttemptAt]]});});
   {const stats=box.querySelector('[data-review-stats]');if(stats)adm('/review-stats?days=7').then(r=>{stats.textContent=`最近 7 天 · 线索 ${r.leads.total}：系统处理 ${r.leads.system}、入口规则 ${r.leads.rule}、人工关闭 ${r.leads.owner}、待处理 ${r.leads.open} · 查重卡 ${r.identity.total}：你在网页 ${r.identity.web}、快速上架 ${r.identity.fastTrack}、代理/脚本 ${r.identity.agent}、系统 ${r.identity.system}、待处理 ${r.identity.open} · 免开卡：同页重读 ${r.avoided.sameSourceReread}、并入已有卡 ${r.avoided.groupedIntoOpenCard}`;}).catch(()=>{stats.remove();});}
   {const spot=box.querySelector('[data-spot-check]');if(spot)spot.addEventListener('toggle',()=>{if(spot.open&&!spot.dataset.loaded){spot.dataset.loaded='1';loadSpotCheck(spot.querySelector('[data-spot-body]'));}});}
   {const panel=box.querySelector('[data-intake-rules]');if(panel)panel.addEventListener('toggle',()=>{if(panel.open&&!panel.dataset.loaded){panel.dataset.loaded='1';loadIntakeRules(panel.querySelector('[data-intake-body]'));}});}
@@ -2227,8 +2286,9 @@ async function admQueue() {
   const applySug = () => $$('[data-sug]', box).forEach(el => { if (el.closest('details')) return; el.style.display = !ADM.sug || ADM.sug === 'all' || el.dataset.sug === ADM.sug ? '' : 'none'; });
   $$('[data-sugtab]', box).forEach(b => b.addEventListener('click', () => { ADM.sug = b.dataset.sugtab; $$('[data-sugtab]', box).forEach(x => x.setAttribute('aria-pressed', x === b)); applySug(); }));
   applySug();
-  const done = (el, msg) => { if(el.dataset.live!=='1'&&!el.dataset.completed){el.dataset.completed='1';const counter=box.querySelector('[data-activity-count]');if(counter)counter.textContent=String(Math.max(0,Number(counter.textContent)-1));} el.style.opacity = .45; el.querySelectorAll('button,input,select').forEach(x => { x.disabled = true; }); toast(msg); };
-  const bindCards = scope => bindAdminCards(scope, { find: (code, live, taskId) => (live ? [...(q.incomplete||[]),...(q.needsVerification||[])] : q.pending).find(x => x.code === code && (!taskId || x.identityTaskId===taskId)), done, reload: admQueue });
+  const done = (el, msg) => { if(el.dataset.live!=='1'&&!el.dataset.completed){el.dataset.completed='1';const counter=box.querySelector('[data-activity-count]');if(counter)counter.textContent=String(Math.max(0,Number(counter.textContent)-1));} el.style.opacity = .45; el.querySelectorAll('button:not([data-review-close]):not([data-review-open]),input,select').forEach(x => { x.disabled = true; }); toast(msg); };
+  const findCard=(code,live,taskId)=>(live?[...(q.incomplete||[]),...(q.needsVerification||[])]:q.pending).find(x=>x.code===code&&(!taskId||x.identityTaskId===taskId));
+  const bindCards=scope=>{bindAdminCards(scope,{find:findCard,done,reload:admQueue});compactOfferCards(scope,findCard);};
   bindCards(box);
   const staleSection=box.querySelector('[data-stale-approved]');let staleShown=0;
   const loadStale=()=>{
@@ -2249,6 +2309,7 @@ async function admQueue() {
     bindCards(target);
   };
   incomplete?.addEventListener('toggle', loadIncomplete);
+  selectWorkspace(ADM.workspace||'activities');
   const focusId = route()[0] === 'admin' ? route()[1] : null;
   if (focusId) {
     if (!q.pending.some(o => o.id === focusId) && q.incomplete?.some(o => o.id === focusId) && incomplete) { incomplete.open = true; loadIncomplete(); }
@@ -2256,6 +2317,8 @@ async function admQueue() {
     if(staleIndex>=0&&staleSection){staleSection.open=true;while(staleShown<=staleIndex)loadStale();}
     const target = $$('[data-offer-id]', box).find(el => el.dataset.offerId === focusId);
     if (target) {
+      selectWorkspace(target.closest('[data-review-pane]')?.dataset.reviewPane||'activities');
+      target.querySelector('[data-review-open]')?.click();
       target.style.display = ''; target.style.outline = '2px solid var(--tag)'; target.tabIndex = -1;
       target.dataset.focused = '1'; target.focus({ preventScroll: true }); target.scrollIntoView?.({ block: 'center' });
     } else {
@@ -2486,13 +2549,14 @@ async function loadFastTrackJobs(box) {
     if(!box.isConnected)return;
     const pending=jobs.filter(j=>!['published','rejected'].includes(j.state)).sort((a,b)=>Number(b.state==='needs_owner')-Number(a.state==='needs_owner'));
     const completed=jobs.filter(j=>['published','rejected'].includes(j.state));
-    const count=box.closest('[data-fast-track-review]')?.querySelector('[data-ft-count]');if(count)count.textContent=String(pending.length);
+    const count=box.closest('.review-workspace')?.querySelector('[data-ft-count]');if(count)count.textContent=String(pending.length);
     const card=j=>`<div class="card" data-ft-job="${esc(j.id)}" style="margin:6px 0"><b>${esc(j.platformName)}</b> · ${esc(j.benefit)}
       <p class="small">${esc((j.missing.includes('membershipCatalog')||/会员产品未经核实|套餐未经核实/.test(j.error||''))?'会员目录待核实':FT_STATE[j.state]||j.state)}${j.offerId ? ` · <a href="/#offer-${esc(j.offerId)}" target="_blank" rel="noopener">查看条目</a>` : ''}${j.leadId ? ` · 线索 #${j.leadId}` : ''} · <a href="${esc(j.url)}" target="_blank" rel="noopener">官方链接 ↗</a>${j.error ? ` · ${esc(j.error)}` : ''}${j.resolution?.reason ? ` · ${esc(j.resolution.reason)}` : ''}</p>
       ${j.state === 'needs_owner' ? fastTrackCompleteHtml(j) : ''}${j.state === 'publishing' ? '<button class="btn sm" type="button" data-ft-advance>继续上架</button>' : ''}</div>`;
     box.innerHTML=(pending.length?pending.map(card).join(''):'<p class="small muted">没有未完成的快速上架任务。</p>')+(completed.length?`<details data-ft-completed><summary>已完成记录 · ${completed.length}</summary>${completed.map(card).join('')}</details>`:'');
     const job = card => jobs.find(j => j.id === card.dataset.ftJob), need = card => job(card)?.missing || [];
     box.querySelectorAll('[data-ft-job]').forEach(card => {
+      const j=job(card);compactReviewCard(card,{platform:j.platformName,title:j.benefit,url:j.url,status:FT_STATE[j.state]||j.state,action:j.state==='needs_owner'?'处理阻塞':'查看进度',facts:[['待处理',j.error],['缺少字段',(j.missing||[]).map(k=>FIELD_L[k]||k).join('、')]]});
       const complete = card.querySelector('[data-ft-complete]');
       if (complete?.querySelector('[data-membership-editor]')) mountMembershipEditor(complete, { requirements: job(card).requirements || [] });
       const id = card.dataset.ftJob, done = r => { toast(r.state === 'published' ? '已上架' : r.state === 'needs_owner' ? (r.error || '还缺字段：' + (r.missing || []).map(k => FIELD_L[k] || k).join('、')) : '已提交'); loadFastTrackJobs(box); };

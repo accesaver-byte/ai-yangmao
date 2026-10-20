@@ -409,4 +409,50 @@ tr.link:hover td{background:var(--surface-2)}
 [data-membership-editor] .chip{white-space:normal;overflow-wrap:anywhere}
 [data-membership-editor] details,[data-owned-subscriptions] details{margin:8px 0}
 [data-membership-editor] summary,[data-owned-subscriptions] summary{cursor:pointer;margin-bottom:6px}
+
+/* Admin workspaces: stage colour identifies the queue, semantic red remains for destructive actions. */
+.review-tone-fast{--review-accent:#8a5a00;--review-soft:#fbeec4}
+.review-tone-activities{--review-accent:#2568b8;--review-soft:#e5eefb}
+.review-tone-leads{--review-accent:#7453ad;--review-soft:#eee7f8}
+.review-tone-live{--review-accent:#377a29;--review-soft:#e8f3de}
+.review-workspaces{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:8px 0 26px}
+.review-workspaces button{display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;padding:17px 14px;border:1px solid var(--line);border-top:4px solid var(--review-accent);border-radius:14px;background:var(--surface);color:var(--review-accent);font:600 15px/1.5 var(--f-body);cursor:pointer}
+.review-workspaces button[aria-selected=true]{background:var(--review-soft);border-color:var(--review-accent);box-shadow:0 0 0 1px var(--review-accent)}
+.review-workspaces button span{font-family:var(--f-num);flex-shrink:0}
+.review-workspace-title{font:600 22px/1.4 var(--f-body);border-left:5px solid var(--review-accent);padding-left:14px;margin:0 0 20px}
+.review-workspace :is(.g2,[data-ft-jobs],[data-lead-section],[data-identity-slot]){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start}
+.review-workspace :is([data-ft-jobs],[data-lead-section],[data-identity-slot])>:not(.review-tile){grid-column:1/-1}
+.review-workspace [data-lead-section]:not([open]){display:block}
+.review-workspace [data-lead-section]>details{display:grid;grid-template-columns:subgrid}
+.review-workspace [data-lead-section]>details:not([open]){display:block}
+.review-workspace [data-lead-section]>details>summary{grid-column:1/-1}
+.review-group-label,.review-workspace [data-activity-section]>details>summary,.review-workspace [data-live-section] summary,.review-workspace [data-lead-section]>summary{font-size:14px;font-weight:600;color:var(--ink-2);margin:16px 0 12px}
+.review-tile{border-top:4px solid var(--review-accent);display:flex!important;flex-direction:column;gap:14px!important;margin:0!important;padding:18px;min-height:350px;height:100%}
+.review-tile[style*="display: none"],.review-tile[style*="display:none"]{display:none!important}
+.review-tile-meta{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;font-size:12px;color:var(--ink-2)}
+.review-state{border-radius:6px;padding:2px 7px;background:var(--review-soft);color:var(--review-accent);flex-shrink:0;max-width:65%}
+.review-tile-title{font:600 17px/1.5 var(--f-body);margin:0;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.review-tile-value{font:600 20px/1.5 var(--f-body);margin:0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.review-tile-facts{margin:0;font-size:13px}
+.review-tile-facts>div{display:grid;grid-template-columns:4.5em minmax(0,1fr);gap:10px;padding:7px 0;border-bottom:1px solid var(--line)}
+.review-tile-facts dt{color:var(--muted)}.review-tile-facts dd{margin:0;text-align:right;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.review-tile-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:auto;padding-top:6px}
+.review-tile-actions .btn{font-size:13px;padding:8px 12px}.review-primary{flex:1;background:var(--review-accent);color:white;border-color:var(--review-accent)}
+.review-dialog{position:fixed;inset:0 0 0 auto;margin:0;width:min(780px,95vw);max-width:100vw;height:100dvh;max-height:100dvh;overflow:auto;border:0;border-left:4px solid var(--review-accent);border-radius:18px 0 0 18px;padding:0;background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+.review-dialog::backdrop{background:rgba(0,0,0,.42)}
+.review-dialog-bar{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;padding:16px 22px;background:var(--surface);border-bottom:1px solid var(--line);color:var(--review-accent)}
+.review-dialog-body{display:flex;flex-direction:column;gap:14px;padding:22px;min-width:0}.review-dialog-body .filters{width:100%}
+.review-tools{margin-top:28px;border-top:1px solid var(--line);padding-top:16px;color:var(--ink-2)}.review-tools-body{padding-top:14px;display:grid;gap:14px}
+.review-workspace button:focus-visible,.review-workspace summary:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+body:has(.review-dialog[open]){overflow:hidden}
+.review-fast-add{margin-bottom:20px}.review-fast-add>summary{cursor:pointer;font-weight:600;color:var(--review-accent)}
+:root[data-theme=dark] .review-tone-fast{--review-accent:#edbd52;--review-soft:#3b3218}
+:root[data-theme=dark] .review-tone-activities{--review-accent:#8dbdf4;--review-soft:#1c304a}
+:root[data-theme=dark] .review-tone-leads{--review-accent:#bea4ef;--review-soft:#30253f}
+:root[data-theme=dark] .review-tone-live{--review-accent:#9dcc8a;--review-soft:#243b24}
+:root[data-theme=dark] .review-primary{color:#142018}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]) .review-tone-fast{--review-accent:#edbd52;--review-soft:#3b3218}:root:not([data-theme=light]) .review-tone-activities{--review-accent:#8dbdf4;--review-soft:#1c304a}:root:not([data-theme=light]) .review-tone-leads{--review-accent:#bea4ef;--review-soft:#30253f}:root:not([data-theme=light]) .review-tone-live{--review-accent:#9dcc8a;--review-soft:#243b24}:root:not([data-theme=light]) .review-primary{color:#142018}}
+@media(max-width:1150px){.review-workspace :is(.g2,[data-ft-jobs],[data-lead-section],[data-identity-slot]){grid-template-columns:repeat(2,minmax(0,1fr))}.review-workspaces{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:650px){.review-workspace :is(.g2,[data-ft-jobs],[data-lead-section],[data-identity-slot]){grid-template-columns:minmax(0,1fr)}.review-workspaces{gap:8px}.review-workspaces button{padding:12px 10px;font-size:13px}.review-tile{min-height:0}.review-dialog{width:100vw;border-radius:0;border-left:0;border-top:4px solid var(--review-accent)}.review-dialog-body{padding:16px}.review-dialog-bar{padding:12px 16px}}
+
 </style>
