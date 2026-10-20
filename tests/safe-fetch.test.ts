@@ -4,6 +4,12 @@ import { assertSafeUrl, fetchPublic, isPublicAddress, UnsafeTargetError } from '
 afterEach(() => vi.unstubAllGlobals());
 
 describe('untrusted source URL boundary', () => {
+  it('allows GitHub Blog public hosting without allowing special 192.0 subnets', () => {
+    expect(isPublicAddress('192.0.66.2')).toBe(true);
+    for (const ip of ['192.0.0.1', '192.0.0.170', '192.0.2.1', '192.168.1.1']) {
+      expect(isPublicAddress(ip)).toBe(false);
+    }
+  });
   it('rejects local and reserved targets before making a request', async () => {
     const request = vi.fn();
     vi.stubGlobal('fetch', request);
