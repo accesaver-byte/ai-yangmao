@@ -1802,14 +1802,14 @@ function pAdmin(focusId) {
   }
   if (!ADM.role) { adm('/whoami').then(me => { ADM.role = me.role; ADM.who = me.who; render(true); }).catch(err => { main().innerHTML = `<div class="card"><p>${esc(err.message)}</p></div>`; }); main().innerHTML = emptySheep('加载中…'); return; }
   const reviewer = ADM.role === 'reviewer';
-  const tabs = reviewer ? [['queue', '待审'], ['leads', '线索'], ['manual', '补录']] : [['queue', '待审'], ['quality', '准确率'], ['leads', '线索'], ['manual', '补录'], ['health', '采集健康']];
+  const tabs = reviewer ? [['queue', '待审'], ['leads', '线索'], ['manual', '补录']] : [['screening', '初筛'], ['fast', '⚡ 快速上架'], ['queue', '待审'], ['quality', '准确率'], ['leads', '线索'], ['manual', '补录'], ['platforms', '平台'], ['health', '采集健康']];
   if (!tabs.some(([k]) => k === ADM.tab)) ADM.tab = 'queue';
   main().innerHTML = ph('审核工作台', reviewer ? `审核员：${esc(ADM.who)}` : '', `<button class="btn sm" type="button" id="admOut">退出登录</button>`) + `
-  <div class="seg" role="tablist" style="margin-bottom:14px">${tabs.map(([k, l]) => `<button type="button" data-admtab="${k}" aria-pressed="${ADM.tab === k}">${l}</button>`).join('')}</div>
+  <div class="seg admin-tabs" role="tablist" style="margin-bottom:14px">${tabs.map(([k, l]) => `<button type="button" data-admtab="${k}" aria-pressed="${ADM.tab === k}">${l}</button>`).join('')}</div>
   <div id="admBody">${emptySheep('加载中…')}</div>`;
   $('#admOut').addEventListener('click', () => { ADM.token = ''; ADM.role = ''; ADM.who = ''; admStore.clear(); render(true); });
-  $$('[data-admtab]').forEach(b => b.addEventListener('click', () => { ADM.tab = b.dataset.admtab; if (route()[1]) location.hash = 'admin'; render(true); }));
-  ({ queue: admQueue, quality: admQuality, leads: admLeads, manual: admManual, health: admHealth })[ADM.tab]().catch(err => { $('#admBody').innerHTML = `<div class="card"><p>${esc(err.message)}</p></div>`; if (!ADM.token) render(true); });
+  $$('[data-admtab]').forEach(b => b.addEventListener('click', () => { if (ADM.tab === 'fast' || b.dataset.admtab === 'fast') ADM.fastPrefill = null; ADM.tab = b.dataset.admtab; if (route()[1]) location.hash = 'admin'; render(true); }));
+  ({ screening: admScreening, fast: admFastTrack, queue: admQueue, quality: admQuality, leads: admLeads, manual: admManual, platforms: admPlatforms, health: admHealth })[ADM.tab]().catch(err => { $('#admBody').innerHTML = `<div class="card"><p>${esc(err.message)}</p></div>`; if (!ADM.token) render(true); });
 }
 function officialReviewBlock(o) {
   const r=o.officialReview;
@@ -1837,12 +1837,12 @@ function leadTaskCard(l) {
     <details style="margin-top:8px"><summary>处理这条线索</summary><label class="field">处理依据<input data-lead-reason placeholder="例如：同一次发放的进度说明"></label>
     <label class="field">关联已有条目<input data-lead-offer placeholder="粘贴条目网址、4 位短码（如 2r48）或完整 ID"></label>
     <div class="row"><button class="btn sm" data-lead-resolve="retry">重新官方核验</button><button class="btn sm" data-lead-resolve="linked">关联已有活动</button><button class="btn sm" data-lead-resolve="closed">结束线索</button></div><p class="small" role="status" data-lead-feedback></p></details>
-    ${ADM.role==='admin'?`<details style="margin-top:8px"><summary>⚡ 快速上架（我已确认官方或亲测）</summary>${fastTrackFormHtml({inline:true,benefit:l.title||'',url:l.url||'',note:(l.note||'').slice(0,1000)})}</details>`:''}</div>`;
+    ${ADM.role==='admin'?'<button type="button" class="btn sm" data-lead-fast>转到快速上架</button>':''}</div>`;
 }
 function bindLeadTasks(box,tasks){
   box.querySelectorAll('[data-lead-task]').forEach(card=>{
     const l=tasks.find(x=>String(x.id)===card.dataset.leadTask);if(!l)return;
-    const fast=card.querySelector('[data-fast-track]');if(fast)bindFastTrackForm(fast,l.id,()=>{card.dataset.resolved='1';});
+    card.querySelector('[data-lead-fast]')?.addEventListener('click',()=>openFastTrackForm({benefit:l.title||'',url:l.url||'',note:(l.note||'').slice(0,1000)},l.id));
     card.querySelectorAll('[data-lead-resolve]').forEach(button=>button.addEventListener('click',async()=>{
       const outcome=button.dataset.leadResolve,reason=card.querySelector('[data-lead-reason]').value.trim(),offerId=card.querySelector('[data-lead-offer]').value.trim(),message=card.querySelector('[data-lead-feedback]');
       if(outcome!=='retry'&&reason.length<2){message.textContent='请先填写处理依据';return;}
@@ -1922,10 +1922,10 @@ function renderIdentityTasks(box,data,append=false,managedIds=new Set()){
  ${canDecide&&!t.visibilityBlocked?'<p class="small muted" style="margin:6px 0 2px">选好后点下面一个按钮，再点出现的「✅ 确认提交」才会保存。</p>':''}
  <div class="row review-actions">${(t.visibilityBlocked||!canDecide?[]:!needsIdentity?[['approve','预览通过'],['reject','预览拒绝']]:[...(t.historyOptions&&!historyOptions.length?[]:[['same','关联同一活动']]),['new','建立独立待审活动'],...(t.historyOptions&&!historyOptions.length?[]:[['distinct','确认与所选旧活动不同']]),['reject','拒绝（整张卡，只需类别和说明）']]).map(([a,l])=>`<button type="button" class="btn sm" data-identity-action="${a}">${l}</button>`).join('')}</div>
  <div data-identity-preview hidden></div><p role="status" data-identity-feedback></p>
- ${ADM.role==='admin'?`<details style="margin-top:8px" data-identity-fast-track><summary>⚡ 快速上架（我已确认官方或亲测）</summary><p class="small muted">上架后本查重任务按“与新条目重复”自动结案。</p>${fastTrackFormHtml({inline:true,platformId:t.candidateDisplay?.platformId||t.display?.platformId||'',url:t.candidateDisplay?.evidenceUrl||t.sources?.[0]?.final_url||t.display?.evidence?.url||'',benefit:String(t.candidateDisplay?.valueText||t.display?.valueText||t.candidateDisplay?.title||'').slice(0,500),title:String(t.candidateDisplay?.title||t.display?.title||'').slice(0,120)})}</details>`:''}`;
+ ${ADM.role==='admin'?'<button type="button" class="btn sm" data-identity-fast-track>转到快速上架</button>':''}`;
  box.append(card);
  if(box.closest('.review-workspace'))compactReviewCard(card,{title:t.display?.title||t.candidateDisplay?.title||'活动查重',value:t.display?.valueText||t.candidateDisplay?.valueText,status:!canDecide?'系统核查中':'查重待决',action:'核对活动',url:t.sources?.[0]?.final_url,facts:[['待处理',t.reviewPreparation?.reason],['来源数量',String(t.sources?.length||0)]]});
- {const fast=card.querySelector('[data-identity-fast-track] [data-fast-track]');if(fast)bindFastTrackForm(fast,null,()=>{card.dataset.resolved='1';},{identityTaskId:t.id});}
+ card.querySelector('[data-identity-fast-track]')?.addEventListener('click',()=>openFastTrackForm({platformId:t.candidateDisplay?.platformId||t.display?.platformId||'',url:t.candidateDisplay?.evidenceUrl||t.sources?.[0]?.final_url||t.display?.evidence?.url||'',benefit:String(t.candidateDisplay?.valueText||t.display?.valueText||t.candidateDisplay?.title||'').slice(0,500),title:String(t.candidateDisplay?.title||t.display?.title||'').slice(0,120)},null,{identityTaskId:t.id}));
  card.querySelectorAll('[data-identity-hint]').forEach(button=>button.addEventListener('click',async()=>{
   const reason=card.querySelector('[data-identity-reason]').value.trim(),feedback=card.querySelector('[data-identity-feedback]');
   // 2026-10-16: a manual mark used to be only a hint the system never acted on. It now closes the card at once.
@@ -2222,23 +2222,16 @@ function compactOfferCards(scope, find) {
 }
 function reviewWorkspace(box, q, counts) {
   box.classList.add('review-workspace');
-  const specs=[...(ADM.role==='admin'?[['fast','⚡ 快速上架','…']]:[]),['activities','权益审核',counts.activities],['leads','线索复核',counts.leadReview],['live','已上架、字段待补',(q.incomplete||[]).length]];
+  const specs=[['activities','权益审核',counts.activities],['leads','线索复核',counts.leadReview],['live','已上架、字段待补',(q.incomplete||[]).length]];
   const nav=document.createElement('nav');nav.className='review-workspaces';nav.dataset.reviewSummary='';nav.setAttribute('role','tablist');nav.setAttribute('aria-label','审核环节');
-  nav.innerHTML=specs.map(([key,label,count])=>`<button type="button" role="tab" id="review-tab-${key}" aria-controls="review-pane-${key}" data-review-tab="${key}" class="review-tone-${key}">${label} <span ${key==='activities'?'data-activity-count':key==='fast'?'data-ft-count':''}>${count}</span></button>`).join('');
+  nav.innerHTML=specs.map(([key,label,count])=>`<button type="button" role="tab" id="review-tab-${key}" aria-controls="review-pane-${key}" data-review-tab="${key}" class="review-tone-${key}">${label} <span ${key==='activities'?'data-activity-count':''}>${count}</span></button>`).join('');
   box.querySelector('[data-review-summary]')?.remove();box.prepend(nav);
   const panels={};
   for(const [key,label] of specs){const panel=document.createElement('section');panel.className=`review-pane review-tone-${key}`;panel.dataset.reviewPane=key;panel.hidden=true;panel.id='review-pane-'+key;panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby','review-tab-'+key);panel.innerHTML=`<h2 class="review-workspace-title">${label}</h2>`;panels[key]=panel;box.append(panel);}
   const move=(selector,key)=>box.querySelectorAll(selector).forEach(node=>panels[key]?.append(node));
-  move('[data-fast-track-review]','fast');move('[data-activity-section]','activities');move('[data-lead-section], [data-priority-section]','leads');move('[data-live-section], [data-stale-approved]','live');
+  move('[data-activity-section]','activities');move('[data-lead-section], [data-priority-section]','leads');move('[data-live-section], [data-stale-approved]','live');
   const suggestions=box.querySelector('[data-sugtab]')?.parentElement;if(suggestions)panels.activities.insertBefore(suggestions,panels.activities.querySelector('[data-activity-section]'));
-  const tools=document.createElement('details');tools.className='review-tools';tools.innerHTML='<summary>辅助管理</summary><div class="review-tools-body"></div>';
-  box.querySelectorAll('[data-review-stats], [data-intake-rules], [data-spot-check], [data-platform-section], [data-autopublish-section]').forEach(node=>tools.lastElementChild.append(node));box.append(tools);
-  for(const key of ['fast','leads','live'])if(panels[key]&&panels[key].children.length===1)panels[key].insertAdjacentHTML('beforeend','<p class="muted">暂无待处理事项</p>');
-  if(panels.fast){
-    const add=document.createElement('details');add.className='review-fast-add';add.innerHTML='<summary>⚡ 新增快速上架</summary>';
-    panels.fast.insertBefore(add,panels.fast.children[1]);
-    add.addEventListener('toggle',()=>{if(!add.open||add.querySelector('[data-fast-track]'))return;add.insertAdjacentHTML('beforeend',fastTrackFormHtml());bindFastTrackForm(add.querySelector('[data-fast-track]'),null,admQueue);});
-  }
+  for(const key of ['leads','live'])if(panels[key]&&panels[key].children.length===1)panels[key].insertAdjacentHTML('beforeend','<p class="muted">暂无待处理事项</p>');
   const select=key=>{
     if(!panels[key])key='activities';ADM.workspace=key;
     Object.entries(panels).forEach(([name,panel])=>{panel.hidden=name!==key;});
@@ -2248,6 +2241,44 @@ function reviewWorkspace(box, q, counts) {
   nav.querySelectorAll('[data-review-tab]').forEach(button=>button.addEventListener('click',()=>select(button.dataset.reviewTab)));
   nav.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const buttons=[...nav.querySelectorAll('button')],index=buttons.indexOf(event.target);const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+(event.key==='ArrowRight'?1:-1)+buttons.length)%buttons.length;select(buttons[next].dataset.reviewTab);buttons[next].focus();});
   return select;
+}
+
+function openFastTrackForm(fields = {}, leadId = null, link = {}, onDone = null) {
+  ADM.fastPrefill = { fields, leadId, link, onDone };
+  ADM.tab = 'fast';
+  if (route()[1]) location.hash = 'admin';
+  render(true);
+}
+
+async function admScreening() {
+  const box = $('#admBody');
+  box.innerHTML = `<h2>线索初筛</h2>
+    <details data-intake-rules><summary>入口关键词规则</summary><div data-intake-body>展开后读取…</div></details>
+    <details data-spot-check><summary>自动关闭抽查</summary><div data-spot-body>展开后读取…</div></details>`;
+  const rules=box.querySelector('[data-intake-rules]'),spot=box.querySelector('[data-spot-check]');
+  rules.addEventListener('toggle',()=>{if(rules.open&&!rules.dataset.loaded){rules.dataset.loaded='1';loadIntakeRules(rules.querySelector('[data-intake-body]'));}});
+  spot.addEventListener('toggle',()=>{if(spot.open&&!spot.dataset.loaded){spot.dataset.loaded='1';loadSpotCheck(spot.querySelector('[data-spot-body]'));}});
+}
+
+async function admFastTrack() {
+  await refreshAdminPlatforms();
+  const box=$('#admBody'),draft=ADM.fastPrefill;
+  box.classList.add('review-workspace','review-tone-fast');
+  box.innerHTML=`<div class="review-fast-layout"><section><h2>⚡ 快速上架</h2>${fastTrackFormHtml(draft?.fields||{})}</section>
+    <section data-fast-track-review><h2>处理进度 <span class="small" data-ft-count>…</span></h2><div data-ft-jobs>正在读取…</div></section></div>`;
+  bindFastTrackForm(box.querySelector('[data-fast-track]'),draft?.leadId||null,async()=>{await draft?.onDone?.();ADM.fastPrefill=null;await loadFastTrackJobs(box.querySelector('[data-ft-jobs]'));},draft?.link||{});
+  await loadFastTrackJobs(box.querySelector('[data-ft-jobs]'));
+}
+
+async function admPlatforms() {
+  const box=$('#admBody');
+  const q=await adm('/queue');
+  if(!box?.isConnected||ADM.tab!=='platforms')return;
+  box.innerHTML=`<h2>平台与信源</h2>
+    <section><h3>新平台待准入</h3>${(q.pendingPlatforms||[]).map(p=>`<div class="card row" style="justify-content:space-between;margin-bottom:8px"><span>${esc(p.name)}（${esc(p.id)}）${p.site?` · <a href="${esc(p.site)}" target="_blank" rel="noopener">官网</a>`:''}</span><span class="row"><button class="btn sm good" data-plat="${esc(p.id)}:approve">准入</button><button class="btn sm bad" data-plat="${esc(p.id)}:reject">拒绝</button></span></div>`).join('')||'<p class="muted">没有待准入平台。</p>'}</section>
+    ${(q.suggestAutoPublish||[]).length?`<section><h3>自动上架建议</h3>${q.suggestAutoPublish.map(x=>`<div class="card" style="margin-bottom:8px">信源 ${esc(x.id)} 已连续原样通过 ${x.cleanStreak} 条 <button class="btn sm" data-autopub="${esc(x.id)}">放开自动上架</button></div>`).join('')}</section>`:''}`;
+  $$('[data-plat]',box).forEach(b=>b.addEventListener('click',async()=>{const [id,act]=b.dataset.plat.split(':');await adm(`/platforms/${id}/${act}`,{});toast('已处理');admPlatforms();}));
+  $$('[data-autopub]',box).forEach(b=>b.addEventListener('click',async()=>{await adm(`/sources/${b.dataset.autopub}/auto-publish`,{on:true});toast('已放开自动上架');admPlatforms();}));
 }
 
 async function admQueue() {
@@ -2262,27 +2293,17 @@ async function admQueue() {
   const card = adminCard;
   const sugCount = k => q.pending.filter(o => (o.suggestion?.verdict || 'none') === k).length;
   const sugTabs = [['all', '全部', q.pending.length], ['approve', '建议通过', sugCount('approve')], ['history', '建议作为历史', sugCount('history')], ['reject', '建议拒绝', sugCount('reject')], ['judge', '需要你判断', sugCount('judge')], ['none', '未标注', sugCount('none')]].filter(([k, , n]) => k === 'all' || n);
-  box.innerHTML = `<section class="card" data-review-summary><b>权益审核 <span data-activity-count>${counts.activities}</span> 项</b> · 线索复核 ${counts.leadReview} 条<p class="small muted">权益审核包含系统补证和等待你决定；线索尚未形成活动。已下架或已标成历史的活动留在原决定里，不再排进这个队列。新线索 ${counts.newLeads??q.newLeads} 条。</p></section>
-    ${ADM.role==='admin'?'<section data-fast-track-review><div data-ft-jobs>正在读取…</div></section>':''}
-    ${ADM.role==='admin'?'<p class="small muted" data-review-stats>正在统计最近 7 天谁在审核…</p>':''}
-    ${ADM.role==='admin'?'<details data-intake-rules><summary>🚫 入口过滤规则（与 AI 无关、优惠券/购物券、中转站等线索一进来就关闭）</summary><div data-intake-body class="small muted">展开后读取…</div></details><details data-spot-check><summary>🔍 自动关闭抽查（最近 7 天，建议每周看一次）</summary><div data-spot-body class="small muted">展开后读取…</div></details>':''}
-    ${q.leadTasks?.length?`<details data-lead-section open><summary>待复核 · ${counts.leadReview} 条</summary>${q.leadTasks.slice(0,10).map(leadTaskCard).join('')}${q.leadTasks.length>10?`<details><summary>其余 ${q.leadTasks.length-10} 条线索复核</summary>${q.leadTasks.slice(10).map(leadTaskCard).join('')}</details>`:''}</details>`:''}
-    ${q.priorityLeads?.filter(l=>l.status==='new').length?`<section data-priority-section><h3>重要新线索</h3>${q.priorityLeads.filter(l=>l.status==='new').map(l=>`<div data-priority-lead="${l.id}"><p>#${l.id} ${esc(l.title||'')} · 将在下一轮研判</p>${ADM.role==='admin'?`<details style="margin:0 0 8px"><summary class="small">⚡ 快速上架（我已确认官方或亲测）</summary>${fastTrackFormHtml({inline:true,benefit:String(l.title||'').slice(0,500),url:l.url||''})}</details>`:''}</div>`).join('')}</section>`:''}
+  box.innerHTML = `${q.leadTasks?.length?`<details data-lead-section open><summary>待复核 · ${counts.leadReview} 条</summary>${q.leadTasks.slice(0,10).map(leadTaskCard).join('')}${q.leadTasks.length>10?`<details><summary>其余 ${q.leadTasks.length-10} 条线索复核</summary>${q.leadTasks.slice(10).map(leadTaskCard).join('')}</details>`:''}</details>`:''}
+    ${q.priorityLeads?.filter(l=>l.status==='new').length?`<section data-priority-section><h3>重要新线索</h3>${q.priorityLeads.filter(l=>l.status==='new').map(l=>`<div data-priority-lead="${l.id}"><p>#${l.id} ${esc(l.title||'')} · 将在下一轮研判</p>${ADM.role==='admin'?'<button type="button" class="btn sm" data-priority-fast>转到快速上架</button>':''}</div>`).join('')}</section>`:''}
     ${sugTabs.length > 2 ? `<div class="seg" role="tablist" style="margin-bottom:12px;flex-wrap:wrap">${sugTabs.map(([k, l, n]) => `<button type="button" data-sugtab="${k}" aria-pressed="${(ADM.sug || 'all') === k}">${l} ${n}</button>`).join('')}</div>` : ''}
-    ${q.pendingPlatforms.length ? `<div class="card" data-platform-section style="margin-bottom:12px"><h3>新平台待准入</h3>${q.pendingPlatforms.map(p => `<div class="row" style="justify-content:space-between;padding:6px 0"><span>${esc(p.name)}（${esc(p.id)}）${p.site ? ` · <a href="${esc(p.site)}" target="_blank" rel="noopener">官网</a>` : ''}</span><span class="row"><button class="btn sm good" data-plat="${p.id}:approve">准入</button><button class="btn sm bad" data-plat="${p.id}:reject">拒绝</button></span></div>`).join('')}</div>` : ''}
-    ${q.suggestAutoPublish.map(x => `<div class="card" data-autopublish-section style="margin-bottom:12px"><span class="st warn"><b>!</b>建议放开</span> 信源 ${esc(x.id)} 已连续原样通过 ${x.cleanStreak} 条 <button class="btn sm" data-autopub="${x.id}">放开自动上架</button></div>`).join('')}
     ${q.needsVerification?.length ? `<details data-stale-approved><summary>已批准 · 待核验 ${q.needsVerification.length} 项</summary><div data-stale-body class="grid g2"></div><button type="button" class="btn sm" data-stale-more hidden>加载更多待核验活动</button></details>` : ''}
     <section data-activity-section><div class="review-group-label">等待你决定 · ${readyCards.length} 项</div><div class="grid g2">${readyCards.map(o=>card(o)).join('')||'<p class="small muted">当前没有资料齐备的活动需要你决定。</p>'}</div>${evidenceCards.length?`<details data-system-evidence open><summary>系统补证 / 补证受阻 · ${evidenceCards.length} 项</summary><div class="grid g2">${evidenceCards.map(o=>card(o)).join('')}</div></details>`:''}<div data-identity-slot></div></section>
     ${q.incomplete?.length ? `<section data-live-section><details data-incomplete><summary style="cursor:pointer">字段待补 · ${q.incomplete.length}</summary><div class="grid g2" data-incomplete-body></div></details></section>` : ''}`;
   const selectWorkspace=reviewWorkspace(box,q,counts);
-  const fastJobs=box.querySelector('[data-ft-jobs]');if(fastJobs)await loadFastTrackJobs(fastJobs);
   const identityBox=box.querySelector('[data-identity-slot]');identityBox.dataset.identityReview='';const remainingTasks=(identity.tasks||[]).filter(t=>!managedIds.has(t.id));if(remainingTasks.length||identity.error||identity.nextCursor)renderIdentityTasks(identityBox,{...identity,tasks:remainingTasks},false,managedIds);
   bindLeadTasks(box,q.leadTasks||[]);
   box.querySelectorAll('[data-lead-task]').forEach(card=>{const l=q.leadTasks.find(l=>String(l.id)===card.dataset.leadTask);compactReviewCard(card,{title:l.title,url:l.url,status:({checking:'核验中',retry:'等待重试',manual:'需要判断'})[l.resolution?.status]||'待复核',action:'复核线索',facts:[['待处理',l.note],['下次重试',l.resolution?.nextAttemptAt]]});});
-  {const stats=box.querySelector('[data-review-stats]');if(stats)adm('/review-stats?days=7').then(r=>{stats.textContent=`最近 7 天 · 线索 ${r.leads.total}：系统处理 ${r.leads.system}、入口规则 ${r.leads.rule}、人工关闭 ${r.leads.owner}、待处理 ${r.leads.open} · 查重卡 ${r.identity.total}：你在网页 ${r.identity.web}、快速上架 ${r.identity.fastTrack}、代理/脚本 ${r.identity.agent}、系统 ${r.identity.system}、待处理 ${r.identity.open} · 免开卡：同页重读 ${r.avoided.sameSourceReread}、并入已有卡 ${r.avoided.groupedIntoOpenCard}`;}).catch(()=>{stats.remove();});}
-  {const spot=box.querySelector('[data-spot-check]');if(spot)spot.addEventListener('toggle',()=>{if(spot.open&&!spot.dataset.loaded){spot.dataset.loaded='1';loadSpotCheck(spot.querySelector('[data-spot-body]'));}});}
-  {const panel=box.querySelector('[data-intake-rules]');if(panel)panel.addEventListener('toggle',()=>{if(panel.open&&!panel.dataset.loaded){panel.dataset.loaded='1';loadIntakeRules(panel.querySelector('[data-intake-body]'));}});}
-  box.querySelectorAll('[data-priority-lead]').forEach(el=>{const fast=el.querySelector('[data-fast-track]');if(fast)bindFastTrackForm(fast,Number(el.dataset.priorityLead),()=>{el.dataset.resolved='1';});});
+  box.querySelectorAll('[data-priority-lead]').forEach(el=>{const lead=(q.priorityLeads||[]).find(l=>String(l.id)===el.dataset.priorityLead);el.querySelector('[data-priority-fast]')?.addEventListener('click',()=>openFastTrackForm({benefit:String(lead.title||'').slice(0,500),url:lead.url||''},lead.id));});
   const applySug = () => $$('[data-sug]', box).forEach(el => { if (el.closest('details')) return; el.style.display = !ADM.sug || ADM.sug === 'all' || el.dataset.sug === ADM.sug ? '' : 'none'; });
   $$('[data-sugtab]', box).forEach(b => b.addEventListener('click', () => { ADM.sug = b.dataset.sugtab; $$('[data-sugtab]', box).forEach(x => x.setAttribute('aria-pressed', x === b)); applySug(); }));
   applySug();
@@ -2326,9 +2347,7 @@ async function admQueue() {
       message.textContent = '这条已不在待审队列，可能已经处理。'; box.prepend(message);
     }
   }
-  if (ADM.role === 'reviewer') $$('[data-plat],[data-autopub],[data-withdraw]', box).forEach(x => x.remove());
-  $$('[data-plat]', box).forEach(b => b.addEventListener('click', async () => { const [id, act] = b.dataset.plat.split(':'); await adm(`/platforms/${id}/${act}`, {}); toast('已处理'); admQueue(); }));
-  $$('[data-autopub]', box).forEach(b => b.addEventListener('click', async () => { await adm(`/sources/${b.dataset.autopub}/auto-publish`, { on: true }); toast('已放开自动上架'); admQueue(); }));
+  if (ADM.role === 'reviewer') $$('[data-withdraw]', box).forEach(x => x.remove());
 }
 async function admQuality() {
   const q = await adm('/quality?days=30');
@@ -2347,7 +2366,10 @@ async function admQuality() {
       <div class="card"><h3>最常被改的字段</h3>${fields.length ? `<div class="rows">${fields.map(([f, n]) => `<div class="row small" style="gap:10px;padding:4px 0"><span style="width:72px">${FIELD_L[f] || f}</span><span class="meter" style="flex:1"><i style="width:${Math.round(n / fields[0][1] * 100)}%"></i></span><span class="num">${n}</span></div>`).join('')}</div>` : '<p class="small muted">还没有修改记录。</p>'}</div>
       <div class="card"><h3>拒绝理由</h3>${reasons.length ? `<div class="rows">${reasons.map(([k, n]) => `<div class="row small" style="gap:10px;padding:4px 0"><span style="width:92px">${RCL[k] || k}</span><span class="meter" style="flex:1"><i style="width:${Math.round(n / reasons[0][1] * 100)}%;background:var(--critical)"></i></span><span class="num">${n}</span></div>`).join('')}</div>` : '<p class="small muted">还没有拒绝记录。</p>'}</div>
     </div>
-    <section>${secH('各信源的原样通过率', '连续原样通过 5 条的信源会被提议放开自动上架')}<div class="card tbl" style="padding:4px 8px"><table><thead><tr><th>信源</th><th>审核数</th><th>原样通过率</th></tr></thead><tbody>${srcs.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${v.total}</td><td class="n">${pct(v.clean, v.total)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">暂无</td></tr>'}</tbody></table></div></section>`;
+    <section>${secH('各信源的原样通过率', '连续原样通过 5 条的信源会被提议放开自动上架')}<div class="card tbl" style="padding:4px 8px"><table><thead><tr><th>信源</th><th>审核数</th><th>原样通过率</th></tr></thead><tbody>${srcs.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${v.total}</td><td class="n">${pct(v.clean, v.total)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">暂无</td></tr>'}</tbody></table></div></section>
+    ${ADM.role==='admin'?'<section data-review-stats class="card small">正在读取最近 7 天的审核分工…</section>':''}`;
+  const stats=$('#admBody [data-review-stats]');
+  if(stats)adm('/review-stats?days=7').then(r=>{if(stats.isConnected)stats.textContent=`最近 7 天 · 线索 ${r.leads.total}：系统处理 ${r.leads.system}、入口规则 ${r.leads.rule}、人工关闭 ${r.leads.owner}、待处理 ${r.leads.open} · 查重卡 ${r.identity.total}：网页 ${r.identity.web}、快速上架 ${r.identity.fastTrack}、代理/脚本 ${r.identity.agent}、系统 ${r.identity.system}、待处理 ${r.identity.open}`;}).catch(()=>{stats.remove();});
 }
 async function admLeads() {
   const box = $('#admBody');
@@ -2355,7 +2377,7 @@ async function admLeads() {
     <form id="admPlatform" class="card" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"><input name="name" placeholder="平台名称" required><select name="type"><option value="lab">模型厂商</option><option value="cloud">云厂商</option><option value="infra">推理平台</option><option value="tool">AI 工具</option><option value="new">新玩家</option></select><input name="site" type="url" placeholder="经核验的官网 https://" required><button class="btn sm" type="submit">送交平台准入</button></form>
     <div class="row" style="gap:12px;margin-bottom:12px"><label class="field">线索状态<select data-lead-status>${[['all','全部未处理'],['new','新线索'],['reviewing','自动复核/待判断'],['linked','已关联'],['rejected','已结束']].map(([value,label])=>`<option value="${value}" ${value === (ADM.leadStatus || 'all') ? 'selected' : ''}>${label}</option>`).join('')}</select></label><span data-lead-count class="small muted"></span></div>
     <div class="rows" data-lead-rows></div><div class="row" style="gap:10px;margin-top:12px"><button class="btn sm" type="button" data-lead-more hidden>加载更早的线索</button><span data-lead-message role="status" class="small"></span></div>`;
-  $('#admPlatform').addEventListener('submit', async e => { e.preventDefault(); const form = e.currentTarget; const fields = Object.fromEntries(new FormData(form)); try { const host = new URL(fields.site).hostname.replace(/^www\./, '').split('.'); fields.id = (host.length > 2 && !['com', 'cn', 'ai', 'io', 'dev', 'co'].includes(host.at(-2)) ? host.at(-2) : host[0]).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+/, '') || 'new-platform'; const r = await adm('/platforms', fields); toast(`平台 ${r.id} 已进入待准入，先在待审页核实后准入`); form.reset(); } catch (err) { toast(err.message); } });
+  $('#admPlatform').addEventListener('submit', async e => { e.preventDefault(); const form = e.currentTarget; const fields = Object.fromEntries(new FormData(form)); try { const host = new URL(fields.site).hostname.replace(/^www\./, '').split('.'); fields.id = (host.length > 2 && !['com', 'cn', 'ai', 'io', 'dev', 'co'].includes(host.at(-2)) ? host.at(-2) : host[0]).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+/, '') || 'new-platform'; const r = await adm('/platforms', fields); toast(`平台 ${r.id} 已进入待准入，请在“平台”页核实`); form.reset(); } catch (err) { toast(err.message); } });
   const rows = box.querySelector('[data-lead-rows]'), more = box.querySelector('[data-lead-more]'), message = box.querySelector('[data-lead-message]'), select = box.querySelector('[data-lead-status]');
   let nextCursor = null, total = 0, request = 0, retryReset = false;
   const count = () => { box.querySelector('[data-lead-count]').textContent = `已显示 ${rows.querySelectorAll('[data-lead]').length} / ${total} 条`; };
@@ -2430,11 +2452,7 @@ async function loadSpotCheck(body) {
       }
     };
     el.querySelector('[data-spot-wrong]').addEventListener('click', () => recover());
-    el.querySelector('[data-spot-fast]').addEventListener('click', () => {
-      if (el.querySelector('[data-fast-track]')) return;
-      el.insertAdjacentHTML('beforeend', `<div style="flex-basis:100%">${fastTrackFormHtml({ inline: true, benefit: it.title.slice(0, 500), url: it.url })}</div>`);
-      bindFastTrackForm(el.querySelector('[data-fast-track]'), id, async () => { await recover(true); });
-    });
+    el.querySelector('[data-spot-fast]').addEventListener('click', () => openFastTrackForm({benefit:it.title.slice(0,500),url:it.url},id,{},async()=>recover(true)));
   });
   body.querySelectorAll('[data-spot-confirm]').forEach(button => button.addEventListener('click', async () => {
     const groupEl = button.closest('[data-spot-group]'), msg = groupEl.querySelector('[data-spot-msg]');
@@ -2486,7 +2504,7 @@ async function loadIntakeRules(body) {
 }
 function fastTrackFormHtml(p = {}) {
   return `<form data-fast-track class="card" style="display:flex;flex-direction:column;gap:10px;max-width:640px${p.inline ? ';margin-top:8px' : ''}">
-    <p class="sub" style="margin:0"><b>⚡ 快速上架</b>：你确认是官方发布或亲测可领的权益，跳过筛查和审核直接上架。链接会登记为该厂商的官方地址；其余字段（含会员条件）由模型读取并补全，校验失败会自动纠正重试。不发即时推送，次日飞书日报带上。</p>
+    <p class="small muted" style="margin:0">确认官方发布或亲测可领后提交；系统补齐字段并直接上架。</p>
     <label class="field">厂商<select name="platformId"><option value="">＋ 新厂商（在下面填写）</option>${adminPlatformOptions(p.platformId)}</select></label>
     <div class="row" data-ft-new style="gap:8px;flex-wrap:wrap"><input name="newName" placeholder="新厂商名称"><select name="newType">${Object.entries(PTYPE).map(([k, v]) => `<option value="${k}" ${k === 'new' ? 'selected' : ''}>${v.l}</option>`).join('')}</select></div>
     <label class="field">官方链接<input type="url" name="url" required placeholder="https://（官网、公众号文章、厂商 X 推文）" value="${esc(p.url || '')}"></label>
@@ -2517,8 +2535,8 @@ function bindFastTrackForm(form, leadId, onDone, link = {}) {
     button.disabled = true;
     try {
       const r = await adm('/fast-track', body);
-      msg.textContent = `官方地址${r.registered.kind === 'existing' ? '已在白名单' : '已登记'}；${r.dispatched ? '已触发采集，模型读取后自动上架' : '下一轮采集读取后自动上架'}。进度见“待审”页顶部的“快速上架待处理”。`;
-      form.reset(); sync(); if (form.membershipEditor) { member.open = false; form.membershipEditor = undefined; } onDone?.();
+      msg.textContent = `官方地址${r.registered.kind === 'existing' ? '已在白名单' : '已登记'}；${r.dispatched ? '已触发采集，模型读取后自动上架' : '下一轮采集读取后自动上架'}。进度见本页任务列表。`;
+      form.reset(); sync(); if (form.membershipEditor) { member.open = false; form.membershipEditor = undefined; } await onDone?.();
     } catch (err) { msg.textContent = err.message; } finally { button.disabled = false; }
   });
 }
@@ -2549,14 +2567,14 @@ async function loadFastTrackJobs(box) {
     if(!box.isConnected)return;
     const pending=jobs.filter(j=>!['published','rejected'].includes(j.state)).sort((a,b)=>Number(b.state==='needs_owner')-Number(a.state==='needs_owner'));
     const completed=jobs.filter(j=>['published','rejected'].includes(j.state));
-    const count=box.closest('.review-workspace')?.querySelector('[data-ft-count]');if(count)count.textContent=String(pending.length);
+    const count=box.closest('#admBody')?.querySelector('[data-ft-count]');if(count)count.textContent=String(pending.length);
     const card=j=>`<div class="card" data-ft-job="${esc(j.id)}" style="margin:6px 0"><b>${esc(j.platformName)}</b> · ${esc(j.benefit)}
       <p class="small">${esc((j.missing.includes('membershipCatalog')||/会员产品未经核实|套餐未经核实/.test(j.error||''))?'会员目录待核实':FT_STATE[j.state]||j.state)}${j.offerId ? ` · <a href="/#offer-${esc(j.offerId)}" target="_blank" rel="noopener">查看条目</a>` : ''}${j.leadId ? ` · 线索 #${j.leadId}` : ''} · <a href="${esc(j.url)}" target="_blank" rel="noopener">官方链接 ↗</a>${j.error ? ` · ${esc(j.error)}` : ''}${j.resolution?.reason ? ` · ${esc(j.resolution.reason)}` : ''}</p>
       ${j.state === 'needs_owner' ? fastTrackCompleteHtml(j) : ''}${j.state === 'publishing' ? '<button class="btn sm" type="button" data-ft-advance>继续上架</button>' : ''}</div>`;
-    box.innerHTML=(pending.length?pending.map(card).join(''):'<p class="small muted">没有未完成的快速上架任务。</p>')+(completed.length?`<details data-ft-completed><summary>已完成记录 · ${completed.length}</summary>${completed.map(card).join('')}</details>`:'');
+    box.innerHTML=(pending.length?pending.map(card).join(''):'<p class="small muted">没有未完成的快速上架任务。</p>')+(completed.length?`<details data-ft-completed><summary>已完成记录 · ${completed.length}</summary><div class="review-completed-grid">${completed.map(card).join('')}</div></details>`:'');
     const job = card => jobs.find(j => j.id === card.dataset.ftJob), need = card => job(card)?.missing || [];
     box.querySelectorAll('[data-ft-job]').forEach(card => {
-      const j=job(card);compactReviewCard(card,{platform:j.platformName,title:j.benefit,url:j.url,status:FT_STATE[j.state]||j.state,action:j.state==='needs_owner'?'处理阻塞':'查看进度',facts:[['待处理',j.error],['缺少字段',(j.missing||[]).map(k=>FIELD_L[k]||k).join('、')]]});
+      const j=job(card),completedJob=['published','rejected'].includes(j.state);compactReviewCard(card,{platform:j.platformName,title:j.benefit,url:j.url,status:FT_STATE[j.state]||j.state,action:completedJob?'查看记录':j.state==='needs_owner'?'处理阻塞':'查看进度',facts:[['待处理',j.error],['缺少字段',(j.missing||[]).map(k=>FIELD_L[k]||k).join('、')]]});
       const complete = card.querySelector('[data-ft-complete]');
       if (complete?.querySelector('[data-membership-editor]')) mountMembershipEditor(complete, { requirements: job(card).requirements || [] });
       const id = card.dataset.ftJob, done = r => { toast(r.state === 'published' ? '已上架' : r.state === 'needs_owner' ? (r.error || '还缺字段：' + (r.missing || []).map(k => FIELD_L[k] || k).join('、')) : '已提交'); loadFastTrackJobs(box); };
@@ -2586,10 +2604,6 @@ async function admManual() {
     <label class="field">类型<select name="kind"><option value="web_list">网页</option><option value="rss">RSS</option><option value="json">官方接口</option></select></label>
     <label class="field">级别<select name="tier"><option value="site">官网页面</option><option value="docs">官方文档</option><option value="official">官方账号（博客、公众号、X）</option><option value="staff">员工账号</option></select></label><button class="btn pri" type="submit">加入信源</button></form>`;
   $('#admSrc select[name="platformId"]').addEventListener('focus', refreshAdminPlatforms);
-  if (ADM.role === 'admin') {
-    $('#admAdd').insertAdjacentHTML('beforebegin', fastTrackFormHtml()+'<p class="small muted">快速上架进度和受阻任务统一在「待审 → 快速上架待处理」查看。</p>');
-    bindFastTrackForm($('#admBody [data-fast-track]'),null,()=>{ADM.tab='queue';render(true);});
-  }
   $('#admSrc').insertAdjacentHTML('afterend', `<section id="admDiscord" class="card" style="display:flex;flex-direction:column;gap:10px;max-width:640px;margin-top:12px"><p class="sub" style="margin:0">Discord 频道：你在自己的服务器关注了厂商公告频道后，在这里把它登记到对应平台，之后它的公告才会成为线索。未登记的频道会被跳过并列在下面。</p><div data-discord-unmapped class="small muted">正在读取未登记频道…</div>
     <form data-discord-manual style="display:flex;flex-direction:column;gap:8px"><label class="field">平台<select name="platformId" required>${adminPlatformOptions()}</select></label><label class="field">频道链接<input name="link" required placeholder="https://discord.com/channels/服务器编号/频道编号"></label><label class="field">名称<input name="name" required placeholder="比如：Higgsfield AI #announcements"></label><button class="btn pri" type="submit">登记 Discord 频道</button></form></section>`);
   const discordBox = $('#admDiscord [data-discord-unmapped]');
@@ -2600,6 +2614,18 @@ async function admManual() {
 
   $('#admSrc').addEventListener('submit', async e => { e.preventDefault(); const form = e.currentTarget; try { const r = await adm('/sources', Object.fromEntries(new FormData(form))); toast(`已加入信源 ${r.id}，下一轮采集开始抓取`); form.reset(); } catch (err) { toast(err.message); } });
   $('#admAdd').addEventListener('submit', async e => { e.preventDefault(); const form = e.currentTarget; const fd = Object.fromEntries(new FormData(form)); try { const r = await adm('/manual', { url: fd.url, note: fd.note || undefined }); toast(`已补录（线索 #${r.leadId}）`); form.reset(); } catch (err) { toast(err.message); } });
+}
+function deliveryCard(x) {
+  const channel={feishu:'飞书',telegram:'Telegram '}[x.channel]||x.channel+' ';
+  const purpose={digest:'每日汇总',urgent:'临期提醒'}[x.kind]||x.kind;
+  const state={pending:'发送结果待确认',unknown:'发送结果不确定'}[x.status]||x.status;
+  const time=Number.isFinite(Date.parse(x.createdAt))?new Date(x.createdAt).toLocaleString('zh-CN',{hour12:false}):x.createdAt;
+  const sending=x.status==='pending'&&Date.now()-Date.parse(x.createdAt)<10*60_000;
+  return `<article class="card delivery-card" data-delivery="${esc(x.id)}"><h3>${esc(channel)}${esc(purpose)} · ${esc(state)}</h3>
+    <p class="small muted">发起时间：${esc(time)}</p>${sending?'<p class="small">发送可能仍在进行，10 分钟后核对。</p>':''}
+    <label class="field">核对依据<input type="text" placeholder="例如：在飞书中找到这条日报" data-reason></label>
+    <div class="row"><button class="btn sm good" data-outcome="delivered" ${sending?'disabled':''}>确认已收到</button><button class="btn sm bad" data-outcome="not_delivered" ${sending?'disabled':''}>确认未收到，可重试</button></div>
+    <details><summary>技术记录</summary><p class="small muted">编号：${esc(x.id)}${x.error?`<br>错误：${esc(x.error)}`:''}</p></details></article>`;
 }
 async function admHealth() {
   const h = await adm('/health');
@@ -2614,7 +2640,7 @@ async function admHealth() {
     ${h.coverageDegraded?`<div class="card" style="margin-bottom:12px"><span class="st warn"><b>!</b>最近全量采集覆盖不完整</span><p class="small">核验失败 ${h.lastCollectAttempt?.stats?.verificationFailed??'未记录'} 次 · 核验延期 ${h.lastCollectAttempt?.stats?.verificationDeferred??'未记录'} 条。抓到网页不代表其中每项福利仍有效。</p></div>`:''}
     ${h.d1Usage?.rowsRead != null && h.d1Usage.rowsRead > h.d1Usage.limits.rowsRead * 0.7 ? `<div class="card" style="margin-bottom:12px"><span class="st warn"><b>!</b>数据库读取接近免费额度</span><p class="small" style="margin:6px 0 0">今天已读 ${Math.round(h.d1Usage.rowsRead / 10000)} 万行，免费版每天上限 500 万行，超了全站会无法加载，到 UTC 0 点（东京 9 点）才恢复。先停掉手动采集和批量操作，或在 Cloudflare 升级 Workers 付费版。</p></div>` : ''}
     ${h.dispatchFailures?.length ? `<div class="card" style="margin-bottom:12px"><span class="st warn"><b>!</b>定时采集没能触发</span><p class="small" style="margin:6px 0 0">最近 48 小时有 ${h.dispatchFailures.length} 次触发 GitHub 采集失败（已自动重试一次）：</p><ul class="small">${h.dispatchFailures.map(f => `<li>${esc(f.at.slice(0, 16).replace('T', ' '))} UTC：${esc(f.error || '')}</li>`).join('')}</ul><p class="small muted" style="margin:0">常见原因：GitHub 令牌过期或被重新生成。换上新令牌后在这里会恢复正常。</p></div>` : ''}
-    ${h.uncertainDeliveries?.length ? `<section>${secH('投递结果需核对', '先到 Telegram 核对是否收到，再选择结果')}${h.uncertainDeliveries.map(x => `<div class="card" data-delivery="${esc(x.id)}" style="margin-bottom:8px"><b>${esc(x.kind)} · ${esc(x.status)}</b><p class="small muted">${esc(x.id)} · ${esc(x.createdAt)} ${x.error ? `· ${esc(x.error)}` : ''}</p><input type="text" placeholder="填写人工核对依据（至少 4 字）" data-reason style="width:100%;margin-bottom:8px"><div class="row"><button class="btn sm good" data-outcome="delivered">确认已收到</button><button class="btn sm bad" data-outcome="not_delivered">确认没收到，可重试</button></div></div>`).join('')}</section>` : ''}
+    ${h.uncertainDeliveries?.length ? `<section>${secH('投递结果需核对', '先在对应渠道核对是否收到，再记录结果')}${h.uncertainDeliveries.map(deliveryCard).join('')}</section>` : ''}
     <div class="card tbl" style="padding:4px 8px"><table><thead><tr><th>信源</th><th>类型</th><th>最近成功</th><th>状态</th><th>放权</th></tr></thead><tbody>${h.sources.filter(x => x.enabled).map(x => { const stale = !x.lastOkAt || Date.now() - Date.parse(x.lastOkAt) > 12 * 3600_000; return `<tr><td title="${esc(x.url)}">${esc(x.id)}</td><td class="small muted">${x.kind}</td><td class="small">${x.lastOkAt ? esc(x.lastOkAt.slice(5, 16).replace('T', ' ')) : '—'}</td><td>${x.failStreak >= 3 ? stBadge('critical', '✕', `连续失败 ${x.failStreak} 次`) : stale ? stBadge('warn', '!', '超过 12 小时未成功') : x.failStreak ? stBadge('warn', '!', '偶发失败') : stBadge('good', '✓', '正常')}</td><td class="small">${x.autoPublish ? '自动上架' : `人工（${x.cleanStreak}/5）`}</td></tr>`; }).join('')}</tbody></table></div>`;
   $$('[data-delivery] [data-outcome]').forEach(button => button.addEventListener('click', async () => { const box = button.closest('[data-delivery]'); const reason = box.querySelector('[data-reason]').value.trim(); if (reason.length < 4) { toast('请先写明人工核对依据'); return; } try { await adm(`/notify/${box.dataset.delivery}/resolve`, { outcome: button.dataset.outcome, reason }); toast('人工核对结果已记录'); admHealth(); } catch (e) { toast(e.message); } }));
 }

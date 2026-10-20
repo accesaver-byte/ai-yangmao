@@ -11,16 +11,16 @@ function page(){return fixture((url,init)=>{
  if(url.includes('/discord/unmapped'))return {channels:[]};
  return queue;
 });}
-it('shows paused fast-track jobs at the top of the review tab with the blocker and retry action',async()=>{
- const f=page();f.run("ADM.tab='queue'");await f.run('admQueue()');await tick();await tick();
+it('shows paused fast-track jobs in the dedicated publishing tab with the blocker and retry action',async()=>{
+ const f=page();f.run("ADM.tab='fast'");await f.run('admFastTrack()');await tick();await tick();
  const panel=f.document.querySelector('[data-fast-track-review]');
  expect(panel).not.toBeNull();expect(panel!.textContent).toContain('MiniMax Code');expect(panel!.textContent).toContain('会员目录待核实');
  expect(panel!.querySelector('[data-ft-retry]')).not.toBeNull();
  expect(f.document.querySelector('[data-ft-count]')!.textContent).toBe('1');
 });
-it('keeps the manual intake form but does not hide fast-track failures in the intake tab',async()=>{
+it('keeps the manual intake form separate from fast publishing',async()=>{
  const f=page();f.run("ADM.tab='manual'");await f.run('admManual()');
- expect(f.document.querySelector('[data-fast-track]')).not.toBeNull();
+ expect(f.document.querySelector('[data-fast-track]')).toBeNull();
  expect(f.document.querySelector('[data-ft-jobs]')).toBeNull();
- expect(f.document.querySelector('#admBody')!.textContent).toContain('待审');
+ expect(f.document.querySelector('#admAdd')).not.toBeNull();
 });
