@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
+import { execFileSync } from 'node:child_process';
 import { describe, it, expect } from 'vitest';
 import { fixture as pageFixture, publicOffer } from './fixtures/frontend';
 
@@ -65,6 +66,8 @@ describe('首屏并行查询', () => {
     await expect(f.load()).rejects.toThrow('/api/offers');
   });
   it('构建产物先执行预取，再执行图表库', () => {
+    // 干净检出与 CI 没有 public/，直接运行测试也应验证真实构建结果。
+    execFileSync('bash', ['web/build.sh'], { timeout: 30_000 });
     const html = readFileSync('public/index.html', 'utf8');
     expect(html.indexOf('src="/initial-data.js"')).toBeGreaterThan(0);
     expect(html.indexOf('src="/initial-data.js"')).toBeLessThan(html.indexOf('src="/vendor/echarts.min.js"'));
