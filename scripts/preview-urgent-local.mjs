@@ -12,7 +12,7 @@ const demo = resolve(root, '.wrangler', `urgent-preview-${Date.now()}`);
 const state = join(demo, 'state');
 const assets = join(demo, 'public');
 mkdirSync(demo, { recursive: true });
-execFileSync(process.execPath, ['scripts/build-web.mjs'], { stdio: 'inherit' });
+execFileSync('bash', ['web/build.sh'], { stdio: 'inherit' });
 cpSync(resolve(root, 'public'), assets, { recursive: true });
 const token = 'local-urgent-demo-only'; // 演示环境的非秘密凭据；未用于原开发库或生产。
 writeFileSync(join(assets, 'demo-login.js'), `sessionStorage.setItem('ym-admin-token','${token}');`);

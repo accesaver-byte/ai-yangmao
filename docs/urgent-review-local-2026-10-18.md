@@ -2,6 +2,8 @@
 
 本版在待审页顶部汇总紧急线索、待审活动和查重任务，并调整现有自动核实队列的处理顺序。仅本地实现与验收，尚未推送或部署。
 
+2026-10-21 按 PR #90 review 重放到最新主线并修复。以下旧验收只证明 10 月 18 日快照；当前实现、迁移及复审结果见 [PR #90 修复记录](pr90-review-2026-10-21.md)。
+
 ## 行为与边界
 
 - 复用 `classifyUrgency`、`compareQueueOrder` 和时区截止计算；按紧急程度、最迟有用核实时间、发现时间排序。明确截止的项目到期退出紧急区，审核记录保留。
@@ -16,9 +18,9 @@
 
 ## 数据与接口
 
-- 迁移 `0049_review_urgency_preferences.sql` 新建排序偏好表，不伪造旧活动的筛选任务，不改变审核状态或公开字段。
+- 迁移 `0051_review_urgency_preferences.sql` 新建排序偏好表，不伪造旧活动的筛选任务，不改变审核状态或公开字段。原 PR 的 0049 已被主线占用，因此重编号；发布前仍须核对实际迁移账本。
 - `GET /api/admin/queue` 增加 `urgent`、`urgencyDismissed`。
-- `GET /api/admin/screening/urgent` 获取紧急区；`POST /api/admin/screening/urgency` 提交 key、expectedVersion、suppressed。沿用管理员及审核员权限。
+- `GET /api/admin/screening/urgent` 获取紧急区，管理员及审核员均可读；`POST /api/admin/screening/urgency` 提交 key、expectedVersion、suppressed，仅管理员可调整全局排序。未迁移时读队列降级运行，偏好写入返回 503。
 - `GET /api/admin/identity/tasks?id=...`、`GET /api/admin/leads?id=...` 定位原处理对象。
 - 发布时须先按运维流程应用迁移；本次只应用过本地迁移，迁移前已备份原本地库。
 

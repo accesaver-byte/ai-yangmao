@@ -43,6 +43,8 @@
 
 ## 发布、事故与工作流查证
 
+- [PR #90 review 修复](pr90-review-2026-10-21.md)：保留主线修复的 rebase、五类功能回归、紧急排序权限和迁移前置条件；未合并或部署。
+
 - [Windows 开发兼容与公开 Agent 接入（本地）](agent-windows-2026-10-20.md)：两项兼容修复、PowerShell 安装器、按系统与客户端展示 Skill / MCP 配置，以及本地验证与未发布边界。
 - [Windows 与 Agent 接入复查（本地）](agent-windows-2026-10-21.md)：兼容问题修复、回归结果、Codex / Claude Code 的 Skill 与 MCP 真实调用，以及尚未完成的桌面 GUI 和官网安装资产验收。
 
