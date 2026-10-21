@@ -43,7 +43,27 @@ let META = { lastSuccessfulCollect: null };
 let COVERAGE = null;
 let MEMBERSHIP_CATALOG = { revision: 0, products: [], plans: [] };
 let MEMBERSHIP_CATALOG_OK = false;
+let MEMBERSHIP_REQUEST_REVISION = 0;
+let MEMBERSHIP_APPLIED_REVISION = 0;
 let DATA_LOAD_REVISION = 0;
+
+function validMembershipCatalog(catalog) {
+  return !!catalog && Number.isInteger(catalog.revision) && Array.isArray(catalog.products) && Array.isArray(catalog.plans);
+}
+function applyMembershipCatalog(catalog, revision) {
+  if (revision < MEMBERSHIP_APPLIED_REVISION || !validMembershipCatalog(catalog)) return;
+  if (MEMBERSHIP_CATALOG_OK && catalog.revision < MEMBERSHIP_CATALOG.revision) return;
+  MEMBERSHIP_CATALOG = catalog;
+  MEMBERSHIP_CATALOG_OK = true;
+  MEMBERSHIP_APPLIED_REVISION = revision;
+}
+async function loadMembershipCatalog(get) {
+  const revision = ++MEMBERSHIP_REQUEST_REVISION;
+  const catalog = await get('/memberships');
+  if (!validMembershipCatalog(catalog)) throw new Error('目录响应无效');
+  applyMembershipCatalog(catalog, revision);
+  return MEMBERSHIP_CATALOG;
+}
 
 async function loadData({ fresh = false, deferExtras = false, onSupplement = () => {} } = {}) {
   const revision = ++DATA_LOAD_REVISION;
@@ -63,6 +83,7 @@ async function loadData({ fresh = false, deferExtras = false, onSupplement = () 
   };
   // A new response contract must not reuse a browser/CDN entry without valuation metadata.
   const coverage = get('/api/coverage?schema=partial-fetch-v1').catch(() => null);
+  const membershipRevision = ++MEMBERSHIP_REQUEST_REVISION;
   const membership = get('/api/memberships').catch(() => null);
   const [pl, of, meta] = await Promise.all([get('/api/platforms'), get('/api/offers?view=all&valuation=v2&schema=valuation-v2-public-inputs&lifecycle=approved-contract-v1&models=models-v1-2026-10-19'), get('/api/meta?schema=partial-fetch-v1')]);
   const now = Date.now(), DAYMS = 864e5;
@@ -98,8 +119,7 @@ async function loadData({ fresh = false, deferExtras = false, onSupplement = () 
     }),
     membership.then(memberships => {
       if (revision !== DATA_LOAD_REVISION) return;
-      MEMBERSHIP_CATALOG_OK = !!memberships && Number.isInteger(memberships.revision) && Array.isArray(memberships.products) && Array.isArray(memberships.plans);
-      if (MEMBERSHIP_CATALOG_OK) MEMBERSHIP_CATALOG = memberships;
+      applyMembershipCatalog(memberships, membershipRevision);
       if (deferExtras) onSupplement();
     }),
   ]);

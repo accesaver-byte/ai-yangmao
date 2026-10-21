@@ -31,6 +31,10 @@ function updateUrgentClocks() {
     section.querySelector('[data-urgent-dismissed]').hidden = dismissed === 0 && !section.querySelector('[data-urgent-dismissed-list] [data-urgent-detail] input, [data-urgent-dismissed-list] [data-urgent-detail] textarea');
   }
 }
+function urgentDetailEditing(section) {
+  return [...section.querySelectorAll('[data-urgent-detail] input, [data-urgent-detail] textarea, [data-urgent-detail] select, [data-urgent-detail] [data-submitting="1"]')]
+    .some(control => !control.closest('[data-resolved="1"], [data-completed="1"]'));
+}
 function bindUrgentReview(box, q) {
   const section = box.querySelector('[data-urgent-section]');
   if (!section) return;
@@ -43,13 +47,13 @@ function bindUrgentReview(box, q) {
   section.querySelector('[data-urgent-refresh]').addEventListener('click', async e => {
     const button = e.currentTarget;
     if (pendingOperations) { toast('处理卡请求尚未完成，请稍后刷新'); return; }
-    if (section.querySelector('[data-urgent-detail] input, [data-urgent-detail] textarea')) { toast('请先完成处理卡中的编辑，再刷新紧急区'); return; }
+    if (urgentDetailEditing(section)) { toast('请先完成处理卡中的编辑，再刷新紧急区'); return; }
     button.disabled = true;
     const startedVersion = interactionVersion;
     try {
       const data = await adm('/screening/urgent');
       if (!section.isConnected) return;
-      if (pendingOperations || startedVersion !== interactionVersion || section.querySelector('[data-urgent-detail] input, [data-urgent-detail] textarea')) {
+      if (pendingOperations || startedVersion !== interactionVersion || urgentDetailEditing(section)) {
         button.disabled = false; toast('刷新期间已操作处理卡，保留当前内容，请稍后再刷新'); return;
       }
       const wrapper = document.createElement('div'); wrapper.innerHTML = urgentReviewHtml(data);
@@ -85,8 +89,11 @@ function bindUrgentReview(box, q) {
       const existing = [...box.querySelectorAll('[data-task-id],[data-identity-task],[data-lead-task],[data-offer-id]')].find(el =>
         row.kind === 'task' ? el.dataset.taskId === row.id || el.dataset.identityTask === row.id : row.kind === 'lead' ? el.dataset.leadTask === row.id : el.dataset.offerId === row.id);
       if (existing) {
+        const pane = existing.closest('[data-review-pane]');
+        if (pane) box.querySelector(`[data-review-tab="${pane.dataset.reviewPane}"]`)?.click();
         for (let parent = existing.parentElement; parent; parent = parent.parentElement) if (parent.tagName === 'DETAILS') parent.open = true;
         existing.hidden = false; existing.style.display = '';
+        existing.querySelector('[data-review-open]')?.click();
         existing.scrollIntoView?.({ block: 'center', behavior: 'smooth' }); return;
       }
       const button = e.currentTarget; button.disabled = true;

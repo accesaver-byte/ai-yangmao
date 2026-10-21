@@ -161,7 +161,7 @@ async function mountMembershipEditor(form, original, options = {}) {
   const state={selectionOnly:options.selectionOnly===true,touched:false,requirement,original:structuredClone(requirement),selectedPlanIds:[],vendorId:original.platformId||form.querySelector('[name="platformId"]')?.value||'',catalogRevision:MEMBERSHIP_CATALOG.revision,catalogAvailable:false,error:''};
   form.membershipEditor=state;
   form.addEventListener('change',e=>{if(e.target.matches('[name="req"],[name="reqPay"]'))form.nonmemberTouched=true;});
-  try{const catalog=await adm('/memberships');if(!Array.isArray(catalog.products)||!Array.isArray(catalog.plans))throw new Error('目录响应无效');MEMBERSHIP_CATALOG=catalog;MEMBERSHIP_CATALOG_OK=true;state.catalogAvailable=true;state.catalogRevision=catalog.revision;}
+  try{const catalog=await loadMembershipCatalog(adm);state.catalogAvailable=true;state.catalogRevision=catalog.revision;}
   catch{state.error='会员目录加载失败：可编辑其他字段，不能确认会员资格';}
   state.selectedPlanIds=membershipSelectedPlans(requirement);
   if(state.selectedPlanIds.length&&!membershipVendorPlans(state.vendorId).some(p=>state.selectedPlanIds.includes(p.id))){
@@ -190,7 +190,7 @@ async function mountMembershipEditor(form, original, options = {}) {
     if(button.hasAttribute('data-membership-clear')){state.selectedPlanIds=[];update();return;}
     if(!button.hasAttribute('data-membership-refresh'))return;
     button.disabled=true;
-    try{const catalog=await adm('/memberships');if(!Array.isArray(catalog.products)||!Array.isArray(catalog.plans))throw new Error('目录响应无效');MEMBERSHIP_CATALOG=catalog;MEMBERSHIP_CATALOG_OK=true;state.catalogRevision=catalog.revision;state.catalogAvailable=true;state.error='';state.touched=true;}
+    try{const catalog=await loadMembershipCatalog(adm);state.catalogRevision=catalog.revision;state.catalogAvailable=true;state.error='';state.touched=true;}
     catch(error){state.error='目录刷新失败：'+error.message;state.catalogAvailable=false;}
     redraw();
   });
@@ -211,10 +211,10 @@ function renderMembershipCatalog(host, redraw) {
         const impact=await adm(`/memberships/${encodeURIComponent(id)}/impact?kind=${kind}`);
         const entry=MEMBERSHIP_CATALOG[kind==='plan'?'plans':'products'].find(p=>p.id===id);
         message.innerHTML=`<p>引用该目录项的福利：${impact.affectedOffers.map(x=>esc(x.title)).join('、')||'无'}。这里只确认名称、所属产品、收费属性和来源，不改这些福利的批准决定。</p><button type="button" class="btn sm" data-confirm-catalog>资料已确认</button>`;
-        message.querySelector('button').onclick=async event=>{event.stopPropagation();try{await adm(`/memberships/${encodeURIComponent(id)}/verify`,{kind,expectedCatalogRevision:impact.catalogRevision,expectedRevision:entry.revision,acknowledgeAffectedOffers:true});MEMBERSHIP_CATALOG=await adm('/memberships');redraw();}catch(error){message.textContent=error.message;}};
+        message.querySelector('button').onclick=async event=>{event.stopPropagation();try{await adm(`/memberships/${encodeURIComponent(id)}/verify`,{kind,expectedCatalogRevision:impact.catalogRevision,expectedRevision:entry.revision,acknowledgeAffectedOffers:true});await loadMembershipCatalog(adm);redraw();}catch(error){message.textContent=error.message;}};
         return;
       }else return;
-      MEMBERSHIP_CATALOG=await adm('/memberships');redraw();
+      await loadMembershipCatalog(adm);redraw();
     }catch(error){message.textContent=error.message;button.disabled=false;}
   };
 }

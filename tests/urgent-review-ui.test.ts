@@ -6,6 +6,25 @@ const queue = (urgent = [row()]) => ({ urgent, urgencyDismissed: [], pending: []
 const pause = () => new Promise(resolve => setTimeout(resolve, 0));
 
 describe('待审页紧急区', () => {
+  it('真实线索处理卡提交中保护输入，成功标记完成后可立即刷新紧急区', async () => {
+    let finish!: (value: unknown) => void;
+    let refreshes = 0;
+    const f = fixture(url => url.includes('/leads?id=99') ? { leads: [{ id: 99, title: '待处理线索', url: 'https://vendor.example', reviewVersion: 'v1' }] }
+      : url.endsWith('/leads/99/resolve') ? new Promise(resolve => { finish = resolve; })
+      : url.endsWith('/screening/urgent') ? (refreshes++, queue([])) : queue());
+    await f.run('admQueue()');
+    (f.document.querySelector('[data-urgent-open]') as any).click(); await pause();
+    (f.document.querySelector('[data-lead-reason]') as any).value = '已核对并结束线索';
+    (f.document.querySelector('[data-lead-resolve="closed"]') as any).click(); await pause();
+    (f.document.querySelector('[data-urgent-refresh]') as any).click(); await pause();
+    expect(refreshes).toBe(0);
+    finish({ ok: true }); await pause();
+    expect(f.document.querySelector('[data-lead-task]')?.getAttribute('data-resolved')).toBe('1');
+    (f.document.querySelector('[data-urgent-refresh]') as any).click(); await pause();
+    expect(refreshes).toBe(1);
+    expect(f.document.querySelector('[data-urgent-count]')?.textContent).toBe('0');
+    expect(f.document.querySelector('[data-lead-task]')).toBeNull();
+  });
   it('恢复高优先级卡片后重新排序，不排到普通紧急卡后面', async () => {
     const q = { ...queue([row({ key: 'lead:100', id: '100', tier: 'P1' })]), urgencyDismissed: [row()] };
     const f = fixture(url => url.endsWith('/screening/urgency') ? { ok: true } : q);
