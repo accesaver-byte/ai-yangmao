@@ -14,7 +14,9 @@ async function screeningPace() {
 
 function retryable(error: unknown): boolean {
   const status = (error as { httpStatus?: number }).httpStatus;
-  return status === 429 || (status != null && status >= 500);
+  // 404/400 from one model is that model's provider (e.g. 2026-10-21 Nvidia "Function not found"): try the next model
+  // instead of aborting the whole fallback chain. Auth (401/403) still stops.
+  return status === 429 || status === 404 || status === 400 || status === 408 || (status != null && status >= 500);
 }
 
 function reserveOptions(model: string, purpose: 'urgent' | 'normal' | 'backfill') {

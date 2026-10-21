@@ -1,1 +1,1 @@
-export const SCREENING_PROMPT_VERSION = 'screening-v1';
+export const SCREENING_PROMPT_VERSION = 'screening-v2';

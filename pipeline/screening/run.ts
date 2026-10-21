@@ -17,7 +17,7 @@ function blank(): ScreeningStats {
 }
 
 function gateSubject(item: QueueItem): GateSubject {
-  return { kind: item.subject.kind === 'task' ? 'candidate' : 'lead', url: item.subject.url ?? '', origin: item.subject.origin ?? null, platformId: item.subject.platformId ?? item.subject.platformIds?.[0] ?? null, title: item.subject.title ?? '', openingText: (item.subject.text ?? '').slice(0, 200) };
+  return { ref: item.itemId, kind: item.subject.kind === 'task' ? 'candidate' : 'lead', url: item.subject.url ?? '', origin: item.subject.origin ?? null, platformId: item.subject.platformId ?? item.subject.platformIds?.[0] ?? null, title: item.subject.title ?? '', openingText: (item.subject.text ?? '').slice(0, 200) };
 }
 
 async function postVerdict(item: QueueItem, verdict: ScreeningVerdict, meta: { model: string; calibrated: boolean; contextHash: string; downgradeReasons: string[] }) {
