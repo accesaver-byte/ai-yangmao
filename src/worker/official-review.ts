@@ -19,7 +19,7 @@ import { leadPriority } from '../shared/leads';
 import { claimEndAt } from '../shared/lifecycle';
 import { officialTier, officialReviewDue, OFFICIAL_REVIEW_LEASE_MS, type OfficialReview } from '../shared/official-review';
 import type { Env } from './index';
-import { readUrgentReviews, urgentFirst } from './screening/urgent-review';
+import { readUrgentReview, readUrgentReviews, urgentFirst } from './screening/urgent-review';
 const db=(env:Env)=>drizzle(env.DB,{schema:s});
 export const officialReviewRoutes=new Hono<{Bindings:Env}>();
 async function context(env:Env,id:string) {
@@ -77,7 +77,7 @@ officialReviewRoutes.post('/:id/claim',async c=>{
     return c.json({claimed:false,recovered:changed.length>0});
   }
   if(!state.eligible || !officialReviewDue(old,now,state.version))return c.json({claimed:false});
-  if((await readUrgentReviews(c.env.DB,new Date(now))).find(r=>r.offerId===state.offer.id)?.expired)return c.json({claimed:false});
+  if((await readUrgentReview(c.env.DB,`offer:${state.offer.id}`,new Date(now)))?.expired)return c.json({claimed:false});
   const review:OfficialReview={identityRevision:state.identityRevision,status:'checking',jobId:crypto.randomUUID(),inputVersion:state.version,originUrl:state.target.evidence.url,attempts:(state.offer.officialReview && state.offer.officialReview.inputVersion===state.version ? state.offer.officialReview.attempts : 0)+1,checkedAt:new Date(now).toISOString(),nextAttemptAt:null,reason:'正在搜索官方出处并核对原文',queries:[],candidates:[]};
   review.unresolvedAttempts=old?.inputVersion===state.version?(old.unresolvedAttempts??(old.status==='unresolved'?old.attempts:0)):0;
   const changed=await db(c.env).update(s.offers).set({officialReview:review}).where(guard).returning({id:s.offers.id});

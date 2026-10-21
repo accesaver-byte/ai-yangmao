@@ -6,3 +6,4 @@ CREATE TABLE review_urgency_preferences (
   actor TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE INDEX review_urgency_preferences_updated_at ON review_urgency_preferences(updated_at);

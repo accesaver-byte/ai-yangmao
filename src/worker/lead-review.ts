@@ -11,7 +11,7 @@ import {leadPriority} from '../shared/leads';
 import {leadReviewDue,leadReviewStale,type LeadResolution} from '../shared/lead-review';
 import {officialTier} from '../shared/official-review';
 import type {Env} from './index';
-import { readUrgentReviews, urgentFirst } from './screening/urgent-review';
+import { readUrgentReview, readUrgentReviews, urgentFirst } from './screening/urgent-review';
 import { verificationRetryDelayMs, verificationWindowEndsAt } from '../shared/screening/urgency';
 const db=(env:Env)=>drizzle(env.DB,{schema:s});
 export const leadReviewRoutes=new Hono<{Bindings:Env}>();
@@ -29,7 +29,7 @@ leadReviewRoutes.get('/queue',async c=>{
 leadReviewRoutes.post('/:id/claim',async c=>{
   const d=db(c.env),[l]=await d.select().from(s.leads).where(eq(s.leads.id,Number(c.req.param('id'))));
   if(!l||!leadReviewDue(l))return c.json({claimed:false});
-  if((await readUrgentReviews(c.env.DB)).find(r=>r.key===`lead:${l.id}`)?.expired)return c.json({claimed:false});
+  if((await readUrgentReview(c.env.DB,`lead:${l.id}`))?.expired)return c.json({claimed:false});
   const resolution:LeadResolution={status:'checking',jobId:crypto.randomUUID(),attempts:(l.resolution?.attempts??0)+1,inconclusive:l.resolution?.inconclusive??0,
     checkedAt:new Date().toISOString(),nextAttemptAt:null,reason:'正在读取原文并搜索官方出处',queries:[],candidates:[],offerIds:l.resolution?.offerIds??[]};
   const changed=await d.update(s.leads).set({resolution}).where(and(eq(s.leads.id,l.id),eq(s.leads.status,'reviewing'),
@@ -75,7 +75,7 @@ leadReviewRoutes.post('/:id/result',async c=>{
   const inconclusive=old.inconclusive+(b.outcome==='manual'?1:0);
   // manualNow：自动核验不可能成功（如微信公众号文章），不再等三次无结论，立即交管理员。
   let status=b.outcome==='manual'&&inconclusive<3&&!b.manualNow?'retry':b.outcome;
-  const urgent=(await readUrgentReviews(c.env.DB,new Date(now))).find(r=>r.key===`lead:${l.id}`);
+  const urgent=status==='retry'?await readUrgentReview(c.env.DB,`lead:${l.id}`,new Date(now)):undefined;
   const tier=urgent&&!urgent.suppressed&&!urgent.expired?urgent.tier:'P3';
   const verifyUntil=(tier==='P0'||tier==='P1')?Date.parse(verificationWindowEndsAt({tier,discoveredAt:l.createdAt,deadline:urgent?.deadline??null,now:new Date(l.createdAt)})):null;
   if(status==='retry'&&(urgent?.expired||(verifyUntil!=null&&verifyUntil<=now))) status='manual';

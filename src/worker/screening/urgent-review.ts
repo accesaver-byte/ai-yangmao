@@ -1,5 +1,5 @@
 import { drizzle } from 'drizzle-orm/d1';
-import { and, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import * as s from '../../db/schema';
 import { claimEndAt } from '../../shared/lifecycle';
 import { classifyUrgency, compareQueueOrder, latestUsefulReviewAt } from '../../shared/screening/urgency';
@@ -27,30 +27,55 @@ const parsed = (text: string | null): Record<string, any> => {
   try { return JSON.parse(text || '{}'); } catch { return {}; }
 };
 
+export function missingUrgencyPreferences(error: unknown): boolean {
+  for (let cause = error; cause instanceof Error; cause = cause.cause) {
+    if (/no such table:\s*(?:main\.)?review_urgency_preferences\b/i.test(cause.message)) return true;
+  }
+  return false;
+}
+
+function material(value: Record<string, any>) {
+  return Object.fromEntries(['platformId', 'title', 'valueText', 'type', 'modalities', 'claimMethod', 'requirements',
+    'membershipRequirement', 'audience', 'claimStart', 'claimEnd', 'endKind', 'sourceTz', 'evidence', 'steps',
+    'creditValidity', 'models', 'tags'].map(key => [key, value[key]]));
+}
+
 /** 只读投影：每次重算倒计时，已结案/过期任务自然退出，不改审核状态。 */
-export async function readUrgentReviews(db: D1Database, now = new Date()): Promise<UrgentReview[]> {
+export async function readUrgentReviews(db: D1Database, now = new Date(), key?: string): Promise<UrgentReview[]> {
   const d = drizzle(db, { schema: s });
+  const [kind, ...parts] = key?.split(':') || [];
+  const id = parts.join(':');
+  const offerScope = kind === 'offer' ? eq(s.offers.id, id) : kind === 'task'
+    ? sql`${s.offers.id} IN (SELECT e.canonical_offer_id FROM benefit_entities e JOIN review_tasks t ON t.entity_id=e.id WHERE t.id=${id})` : undefined;
+  const proposalScope = kind === 'offer' ? eq(s.offerProposals.offerId, id) : kind === 'task'
+    ? sql`${s.offerProposals.offerId} IN (SELECT e.canonical_offer_id FROM benefit_entities e JOIN review_tasks t ON t.entity_id=e.id WHERE t.id=${id})` : undefined;
+  const taskScope = kind === 'task' ? ' AND t.id=?' : kind === 'offer' ? ' AND e.canonical_offer_id=?' : '';
+  const taskArgs = taskScope ? [id] : [];
+  const preferenceScope = key ? ` WHERE subject_key=?${kind === 'offer' ? " OR subject_key IN (SELECT 'task:'||t.id FROM review_tasks t JOIN benefit_entities e ON e.id=t.entity_id WHERE e.canonical_offer_id=?)" : ''}` : '';
   const [offers, proposals, leads, taskRows, screenRows, prefs] = await Promise.all([
-    d.select().from(s.offers).where(and(canonicalOffers, sql`(${s.offers.reviewState}='pending'
+    kind === 'lead' ? Promise.resolve([]) : d.select().from(s.offers).where(and(canonicalOffers, offerScope, sql`(${s.offers.reviewState}='pending'
       OR EXISTS(SELECT 1 FROM offer_proposals p WHERE p.offer_id=${s.offers.id})
       OR EXISTS(SELECT 1 FROM benefit_entities e JOIN review_tasks t ON t.entity_id=e.id
         WHERE e.canonical_offer_id=${s.offers.id} AND e.state='active' AND t.state IN ('open','checking','manual')))`)),
-    d.select().from(s.offerProposals),
-    d.select().from(s.leads).where(inArray(s.leads.status, ['new', 'reviewing'])),
-    db.prepare(`SELECT t.id,t.kind,t.state,t.revision,t.created_at,e.canonical_offer_id,rd.basis_json,
+    kind === 'lead' ? Promise.resolve([]) : d.select().from(s.offerProposals).where(proposalScope),
+    key && kind !== 'lead' ? Promise.resolve([]) : d.select().from(s.leads).where(and(inArray(s.leads.status, ['new', 'reviewing']), key ? eq(s.leads.id, Number(id)) : undefined)),
+    db.prepare(`SELECT t.id,t.kind,t.state,t.material_revision,t.created_at,e.canonical_offer_id,rd.basis_json,
       v.display_candidate_json,c.raw_candidate_json,c.id candidate_id
       FROM review_tasks t LEFT JOIN benefit_entities e ON e.id=t.entity_id
       LEFT JOIN benefit_versions v ON v.id=t.version_id AND v.entity_id=e.id
       LEFT JOIN review_decisions rd ON rd.id=t.decision_id
       LEFT JOIN task_candidates tc ON tc.task_id=t.id LEFT JOIN intake_candidates c ON c.id=tc.candidate_id
-      WHERE t.state IN ('open','checking','manual') AND (e.id IS NULL OR e.state='active') ORDER BY t.id,c.id`).all<{
-        id: string; kind: string; state: string; revision: number; created_at: string; canonical_offer_id: string | null;
+      WHERE t.state IN ('open','checking','manual') AND (e.id IS NULL OR e.state='active')${kind === 'lead' ? ' AND 0' : taskScope} ORDER BY t.id,c.id`).bind(...taskArgs).all<{
+        id: string; kind: string; state: string; material_revision: number; created_at: string; canonical_offer_id: string | null;
         display_candidate_json: string | null; raw_candidate_json: string | null; candidate_id: string | null; basis_json: string | null;
       }>(),
     db.prepare(`SELECT id,tier,tier_by,deadline,urgency_quote,signals_json,revision FROM screening_items
-      WHERE id IN (SELECT 'lead:'||id FROM leads WHERE status IN ('new','reviewing')
-        UNION SELECT 'task:'||id FROM review_tasks WHERE state IN ('open','checking','manual'))`).all<Screening>(),
-    db.prepare('SELECT subject_key,subject_version,suppressed FROM review_urgency_preferences').all<{ subject_key: string; subject_version: string; suppressed: number }>(),
+      WHERE ${key ? "id=? OR id IN (SELECT 'task:'||t.id FROM review_tasks t JOIN benefit_entities e ON e.id=t.entity_id WHERE e.canonical_offer_id=?)" : "id IN (SELECT 'lead:'||id FROM leads WHERE status IN ('new','reviewing') UNION SELECT 'task:'||id FROM review_tasks WHERE state IN ('open','checking','manual'))"}`)
+      .bind(...(key ? [key, kind === 'offer' ? id : ''] : [])).all<Screening>(),
+    db.prepare('SELECT subject_key,subject_version,suppressed FROM review_urgency_preferences' + preferenceScope)
+      .bind(...(key ? kind === 'offer' ? [key, id] : [key] : []))
+      .all<{ subject_key: string; subject_version: string; suppressed: number }>()
+      .catch(error => { if (!missingUrgencyPreferences(error)) throw error; return { results: [] }; }),
   ]);
   const screens = new Map(screenRows.results.map(row => [row.id, row]));
   const preferences = new Map(prefs.results.map(row => [row.subject_key, row]));
@@ -64,7 +89,7 @@ export async function readUrgentReviews(db: D1Database, now = new Date()): Promi
     const target = { ...o, ...(proposal?.candidate || {}) };
     subjects.push({ key: `offer:${o.id}`, kind: 'offer', id: o.id, offerId: o.id, title: target.title,
       text: target.valueText, url: target.evidence?.url || '', discoveredAt: o.discoveredAt,
-      revision: [o.updatedAt, proposal?.updatedAt, target], deadline: timing(target), stage: '活动待审：核对领取条件和官方依据后决定' });
+      revision: material(target), deadline: timing(target), stage: '活动待审：核对领取条件和官方依据后决定' });
   }
   const grouped = new Map<string, typeof taskRows.results>();
   for (const row of taskRows.results) grouped.set(row.id, [...(grouped.get(row.id) || []), row]);
@@ -72,13 +97,13 @@ export async function readUrgentReviews(db: D1Database, now = new Date()): Promi
     const t = rows[0];
     const original = t.canonical_offer_id ? byOffer.get(t.canonical_offer_id) : null;
     if (original?.withdrawnAt && parsed(t.basis_json).visibilityReopen !== true) continue;
-    const candidates = rows.map(r => ({ ...original, ...parsed(r.display_candidate_json || r.raw_candidate_json) }));
+    const candidates = rows.map(r => ({ ...original, ...(r.display_candidate_json ? parsed(r.display_candidate_json) : parsed(r.raw_candidate_json).candidate || {}) }));
     const ends = candidates.map(timing).filter((x): x is string => !!x).sort();
     const chosenEnd = ends.find(end => Date.parse(end) > now.getTime()) || ends[0];
     const candidate = candidates.find(c => timing(c) === chosenEnd) || candidates[0];
     subjects.push({ key: `task:${id}`, kind: 'task', id, offerId: t.canonical_offer_id || undefined,
       title: candidate.title || '待核对活动', text: candidates.map(c => `${c.title || ''}\n${c.valueText || ''}`).join('\n'),
-      url: candidate.evidence?.url || '', discoveredAt: t.created_at, revision: [t.revision, rows.map(r => [r.candidate_id, r.raw_candidate_json, r.display_candidate_json])],
+      url: candidate.evidence?.url || '', discoveredAt: t.created_at, revision: [t.material_revision, rows.map(r => [r.candidate_id, r.raw_candidate_json, r.display_candidate_json])],
       deadline: chosenEnd || null, stage: ['identity', 'merge_conflict'].includes(t.kind) ? '权益查重：先确认是不是同一次福利' : '活动待审：沿用原审核检查' });
   }
   for (const l of await canonicalLeadProjection(db, leads)) {
@@ -99,7 +124,7 @@ export async function readUrgentReviews(db: D1Database, now = new Date()): Promi
     let tier: Tier = urgency.tier;
     if (!expired && recent && screen && screen.tier < tier) tier = screen.tier;
     if (expired) tier = 'P3';
-    const version = await sha256(stableJson([subject.key, subject.revision, deadline, screen?.revision, screen?.tier_by]));
+    const version = await sha256(stableJson([subject.key, subject.revision, deadline, screen?.tier, screen?.urgency_quote, screen?.signals_json]));
     const pref = preferences.get(subject.key);
     const suppressed = pref?.subject_version === version ? !!pref.suppressed : screen?.tier_by === 'owner' && screen.tier === 'P3';
     const { text: _text, revision: _revision, ...publicSubject } = subject;
@@ -107,6 +132,11 @@ export async function readUrgentReviews(db: D1Database, now = new Date()): Promi
       reason: expired ? '已截止，保留原审核记录，不再加急' : deadline ? '按领取截止时间加急' : urgency.quote || screen?.urgency_quote || '筛选记录提示可能限量或短时发放，仍需核实',
       latestUsefulReviewAt: latestUsefulReviewAt(deadline, tier) };
   }));
+}
+
+/** claim/result 仅读取当前对象；不扫描整份紧急队列。 */
+export async function readUrgentReview(db: D1Database, key: string, now = new Date()) {
+  return (await readUrgentReviews(db, now, key)).find(row => row.key === key || (key.startsWith('offer:') && row.offerId === key.slice(6)));
 }
 
 export function urgentFirst(a: UrgentReview, b: UrgentReview): number {
