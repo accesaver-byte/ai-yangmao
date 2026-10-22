@@ -79,3 +79,13 @@ it('early content rejections reach the triage corrections; duplicates and unveri
   expect(body.corrections.some((l: string) => l.includes('Claude 公益中转站') && l.includes('中转站'))).toBe(true);
   expect(body.corrections.some((l: string) => l.includes('豆包额度用完送重置'))).toBe(false);
 });
+
+import { findNearDuplicate } from '../src/shared/screening/gate0';
+it('gate0 never matches a lead against its own record (2026-10-21 #7675 self-match)', () => {
+  const now = new Date();
+  const record: any = { ref: 'lead:7675', kind: 'lead', platformId: null, origin: 'aihot', title: 'OpenAI 推出 Rosalind Academic Plan', valueText: null, type: null, claimStart: null, claimEnd: null, sourceTz: null, evidenceUrl: null, urlKey: 'aihot.example/rosalind', benefitExcerpt: null, decision: 'rejected', linkedOfferId: null, reasonCategory: 'non_ai', actorKind: 'owner', recurring: false, decidedAt: now.toISOString() };
+  const memory: any = { generatedAt: now.toISOString(), records: [record], rules: [], profiles: [], calibrations: [] };
+  const subject = { kind: 'lead' as const, url: 'https://aihot.example/rosalind', origin: 'aihot', platformId: null, title: 'OpenAI 推出 Rosalind Academic Plan', openingText: '' };
+  expect(findNearDuplicate({ ...subject, ref: 'lead:7675' }, memory, now)).toBeNull();
+  expect(findNearDuplicate({ ...subject, ref: 'lead:9999' }, memory, now)).not.toBeNull();
+});

@@ -19,6 +19,8 @@ export function matchTitleRule(input: { title: string; origin: string | null; pl
 }
 
 export type GateSubject = {
+  /** The subject's own memory ref (e.g. lead:7675); never a match for itself. */
+  ref?: string;
   kind: 'lead' | 'candidate';
   url: string;
   origin: string | null;
@@ -49,6 +51,8 @@ function insideWindow(subject: GateSubject, record: MemoryRecord): boolean {
 
 export function findNearDuplicate(subject: GateSubject, memory: MemorySnapshot, now: Date): GateMatch | null {
   const key = urlKey(subject.url);
+  // 2026-10-21: a lead re-screened after it was closed matched its own record as a "rejected repost" (#7675).
+  memory = { ...memory, records: memory.records.filter(record => record.ref !== subject.ref) };
   const sameUrl = memory.records.find(record => record.kind === 'lead' && record.urlKey === key && (record.decision === 'linked' || record.decision === 'rejected'));
   if (sameUrl) return { matchKind: 'decided_url', ref: sameUrl.ref, similarity: 1 };
   const recent = (record: MemoryRecord) => !!record.decidedAt && now.getTime() - Date.parse(record.decidedAt) <= 90 * day && now.getTime() >= Date.parse(record.decidedAt);

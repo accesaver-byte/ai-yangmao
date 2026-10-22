@@ -22,7 +22,12 @@ function unsure(ctx: VerdictContext, partial?: Partial<ScreeningVerdict>): Scree
 }
 
 export function validateVerdict(raw: unknown, ctx: VerdictContext): { verdict: ScreeningVerdict; downgradeReasons: string[] } {
-  const parsed = screeningVerdictSchema.safeParse(raw);
+  // Optional fields a model leaves out are not a wrong judgement: default the nullable ones, and urgency comes from the
+  // deterministic detector anyway. verdict, confidence and evidenceQuote stay required.
+  const filled = raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? { matchId: null, ruleId: null, reasonCategory: null, occurrenceCheck: null, explanation: '', ...(raw as Record<string, unknown>), urgency: (raw as { urgency?: unknown }).urgency ?? ctx.deterministicUrgency }
+    : raw;
+  const parsed = screeningVerdictSchema.safeParse(filled);
   if (!parsed.success) return { verdict: unsure(ctx), downgradeReasons: ['schema_invalid'] };
   const verdict = parsed.data;
   const reasons: string[] = [];
