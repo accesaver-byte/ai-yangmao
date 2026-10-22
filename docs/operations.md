@@ -1,6 +1,6 @@
 # 运维说明
 
-校对日期：2026-10-15。本文描述现役命令和源码机制；当次线上版本、任务和未完成项见[整理凭证](closeout-2026-10-15.md)。字段与业务口径由[数据合同](data-contract.md)维护，文档职责见[索引](README.md)。
+校对日期：2026-10-15。本文描述现役命令和源码机制；当次线上版本、任务和未完成项见最近的[整理凭证](closeout-2026-10-22.md)。字段与业务口径由[数据合同](data-contract.md)维护，文档职责见[索引](README.md)。
 
 ## 身份改造发布状态
 
@@ -162,7 +162,7 @@ OpenRouter默认备用为`openrouter/free`；404须检查模型可用性，不�
 
 ### 里程碑 2：gate0 自动生效（2026-10-21）
 
-Worker 变量 `SCREENING_GATE0_MODE=auto`（与 `SCREENING_MODE` 分开，模型判断仍为 `shadow`）：gate0 的确定性判断直接作用于线索——与管理员已拒绝线索相同的转帖关闭（`resolution.gate0=true`），与已上架活动相同的线索关联。按最终结果核对 142/142（排除自我匹配后）。不处理：标题或活动含每日/每周/每月/重置等周期词的线索与活动、已关联查重卡的线索。回滚：把该变量改成 `shadow`。防误判：线索与已上架活动的金额都写明但无一相同时不自动关联；系统自动关联的线索进入「🔍 自动关闭抽查」（标“系统判为重复并关联”），点「↩ 不是重复，放回队列」即解除关联、回到线索队列。模型固定为 `SCREENING_MODELS=nvidia/nemotron-3-ultra-550b-a55b:free,minimax/minimax-m3.1-flash:free`（2026-10-21 当日 29 张卡盲测：重复判断 21/21、19/19）。模型判断计划 2026-10-28 复核，要求关闭精确率 ≥97% 且周期/重置类零误关。
+Worker 变量 `SCREENING_GATE0_MODE=auto`（与 `SCREENING_MODE` 分开，模型判断仍为 `shadow`）：gate0 的确定性判断直接作用于线索——与管理员已拒绝线索相同的转帖关闭（`resolution.gate0=true`），与已上架活动相同的线索关联。按最终结果核对 142/142（排除自我匹配后）。不处理：标题或活动含每日/每周/每月/重置等周期词的线索与活动、已关联查重卡的线索。回滚：把该变量改成 `shadow`。防误判：线索与已上架活动的金额都写明但无一相同时不自动关联；系统自动关联的线索进入「🔍 自动关闭抽查」（标“系统判为重复并关联”），点「↩ 不是重复，放回队列」即解除关联、回到线索队列。模型固定为 `SCREENING_MODELS=nvidia/nemotron-3-ultra-550b-a55b:free,minimax/minimax-m3.1-flash:free`（2026-10-21 当日 29 张卡盲测：重复判断 21/21、19/19）。模型对线索的判断仍为影子，原计划 2026-10-28 复核（关闭精确率 ≥97% 且周期/重置类零误关）；查重卡上的“与已上架重复”判断已于 2026-10-22 由管理员提前放行，见下节。
 
 ### 查重卡：页面记忆、阅读器页面与模型结案（2026-10-22）
 
@@ -173,7 +173,7 @@ Worker 变量 `SCREENING_GATE0_MODE=auto`（与 `SCREENING_MODE` 分开，模型
 - **模型结案**（`src/worker/screening/model-duplicate.ts`）：Worker 变量 `SCREENING_DUPLICATE_MODELS`（逗号分隔，填 `SCREENING_MODELS` 中的固定模型）中的模型对查重卡给出 `duplicate_published`、置信度 ≥0.9 时，经守卫后按 `duplicate` 拒绝结案，署名 `policy:screening-duplicate-v1`，理由写明已上架 X。守卫：卡片仍开放、X 已批准且未撤下、同平台、候选金额/模型/门槛都在 X 的批准条款中、非重置、定期活动（有截止日期且含每日/每周/每月）不处理、候选日期不超出 X 的窗口、管理员未曾对该来源撤销过模型结案。`openrouter/free` 兜底模型不在名单内，永不结案。变量为空即恢复影子模式。
 - **抽查与撤销**：「自动关闭抽查」顶部「🤖 系统查重结案」列出未确认的模型结案；「✅ 关得对」记为确认，「↩ 不是重复，放回队列」按原拒绝 `reopenDecision` 重开查重卡（保留拒绝历史，不自动批准）。接口（仅管理员）：`GET /api/admin/screening/spot-check/cards`、`POST .../cards/:id/confirm`、`POST .../cards/:id/undo`。
 - **存量卡**：上线前已有模型判定的卡不会再筛选。`POST /api/admin/screening/model-duplicates/apply` 默认演练，只报告“would close / keep: 原因”；`{"dryRun":false}` 才结案，每请求 2 张，按 `nextCursor` 续传。
-- 线索产生的查重卡由官方复核路径创建，目前没有卡片级模型判定，模型结案暂不覆盖；线索级判定只在抽查与校准中使用。
+- 卡片级模型筛选只在官方页面抽取路径运行（`pipeline/run.ts` 的 `screenCandidateReceipts`）；线索经旧适配器（`legacy-adapter-v1`）产生的查重卡没有卡片级判定，模型结案暂不覆盖，线索级判定只在抽查与校准中使用。
 
 ### 入口过滤规则（2026-10-16）
 
@@ -203,7 +203,7 @@ Worker 变量 `SCREENING_GATE0_MODE=auto`（与 `SCREENING_MODE` 分开，模型
 
 ### 查重模型辅助下线（2026-10-17）
 
-Worker 的规则比较器在入库时已自动结案约 95% 候选（重复已拒/已上架）；剩下的才开查重卡。GitHub 采集原先再领取这些卡、重跑同一比较器后调用免费模型，但结果只能是“仍需人工”：10-11 至 10-17 约 246 次，0 次自动决定，存下的 128 个结果全是 `retrieval_incomplete`（同产品历史超过 8 条或产品未知，根本没调用模型）。现采集只做重试、原文核实和历史扫描，不再领取 `/api/ingest/identity-tasks`，也不读 `IDENTITY_MODEL_ASSIST`（GitHub/Worker 的该变量可删除）。查重卡由管理员按“系统建议”与同厂商历史列表决定。
+Worker 的规则比较器在入库时已自动结案约 95% 候选（重复已拒/已上架）；剩下的才开查重卡。GitHub 采集原先再领取这些卡、重跑同一比较器后调用免费模型，但结果只能是“仍需人工”：10-11 至 10-17 约 246 次，0 次自动决定，存下的 128 个结果全是 `retrieval_incomplete`（同产品历史超过 8 条或产品未知，根本没调用模型）。现采集只做重试、原文核实和历史扫描，不再领取 `/api/ingest/identity-tasks`，也不读 `IDENTITY_MODEL_ASSIST`（GitHub/Worker 的该变量可删除）。查重卡由管理员按“系统建议”与同厂商历史列表决定；2026-10-22 起固定筛选模型的重复判断可结案，见上文“查重卡：页面记忆、阅读器页面与模型结案”。
 
 ### 自动关闭抽查（2026-10-16）
 

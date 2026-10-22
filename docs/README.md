@@ -15,7 +15,7 @@
 | 逐条审核的操作流程 | [仓库审核技能](../.claude/skills/yangmao-review/SKILL.md) |
 | 外部 Agent 查询与 MCP 接入 | [公开接入规格](specs/public-agent-access.md) / [公开 Skill](../integrations/agent/ai-yangmao-public/SKILL.md) |
 | Hermes 的查询和管理操作 | [Hermes 接入模板](../integrations/hermes/ai-yangmao/SKILL.md)；安装副本需单独核对 |
-| 最近一次知识与运行态核对 | [2026-10-21 整理凭证](closeout-2026-10-21.md)（前一次：[2026-10-16](closeout-2026-10-16.md)） |
+| 最近一次知识与运行态核对 | [2026-10-22 整理凭证](closeout-2026-10-22.md)（前一次：[2026-10-21](closeout-2026-10-21.md)） |
 
 ## 方案与实施范围
 
@@ -46,7 +46,7 @@
 
 - [OpenRouter 官方模型证据与审核恢复](openrouter-evidence-recovery-2026-10-18.md)：官方短帖补证、误关恢复、负面学习纠正与平台要点。
 
-- [AIHOT Codex reset 自动上架](aihot-reset-auto-publish-2026-10-18.md)：管理员授权范围、员工原帖证据、持久续传及发布凭证。
+- [AIHOT Codex reset 自动上架](aihot-reset-auto-publish-2026-10-18.md)：管理员授权范围、员工原帖证据、持久续传及发布凭证；2026-10-22 起以 AIHOT 事件与中文备注判定。
 
 - [D1读取额度耗尽与网站恢复](d1-quota-recovery-2026-10-11.md)：公开快照恢复浏览、身份回填关联索引、配额恢复后的调度，以及尚待验证事项。
 
