@@ -13,6 +13,7 @@ import { confirmAutoClosed, listAutoClosed, markWronglyClosed } from './spot-che
 import { applyModelDuplicate, applyRecordedModelDuplicates, confirmModelClosedCard, listModelClosedCards, trustedDuplicateModels, undoModelClosedCard } from './model-duplicate';
 import { activeTitleRules, applyRuleToOpenLeads, createIntakeRule, listIntakeRules, retireIntakeRule, RuleError, suggestIntakeRules } from './intake-rules';
 import type { Env } from '../index';
+import { missingUrgencyPreferences, readUrgentReview, urgentReviewQueue } from './urgent-review';
 
 export const screeningIngestRoutes = new Hono<{ Bindings: Env }>();
 
@@ -191,6 +192,31 @@ function taskSubject(row: QueueRow) {
 }
 
 export const screeningAdminRoutes = new Hono<{ Bindings: Env; Variables: { role: 'admin' | 'reviewer'; who: string } }>();
+
+screeningAdminRoutes.get('/urgent', async c => c.json(await urgentReviewQueue(c.env.DB)));
+screeningAdminRoutes.post('/urgency', async c => {
+  if (c.get('role') !== 'admin') return c.json({ error: '仅管理员可调整全局排序' }, 403);
+  const input = z.object({ key: z.string().max(300).regex(/^(?:(?:offer|task):.+|lead:\d+)$/), expectedVersion: z.string().length(64), suppressed: z.boolean() }).safeParse(await c.req.json().catch(() => null));
+  if (!input.success) return c.json({ error: '需要当前卡片版本和排序选择' }, 400);
+  const row = await readUrgentReview(c.env.DB, input.data.key);
+  if (!row || row.expired || row.version !== input.data.expectedVersion) return c.json({ error: '任务已处理、截止或内容变化，请刷新后重试' }, 409);
+  // 偏好绑定此版本；并发产生的新版本不受旧请求影响。
+  try {
+  // 已结束对象的偏好保留 30 天供追溯，之后在管理员调整排序时顺带清理。
+  await c.env.DB.prepare(`DELETE FROM review_urgency_preferences WHERE updated_at<?
+    AND NOT EXISTS(SELECT 1 FROM offers WHERE 'offer:'||id=subject_key AND (review_state='pending' OR EXISTS(SELECT 1 FROM offer_proposals WHERE offer_id=offers.id)))
+    AND NOT EXISTS(SELECT 1 FROM review_tasks WHERE 'task:'||id=subject_key AND state IN ('open','checking','manual'))
+    AND NOT EXISTS(SELECT 1 FROM leads WHERE 'lead:'||id=subject_key AND status IN ('new','reviewing'))`)
+    .bind(new Date(Date.now() - 30 * 86400_000).toISOString()).run();
+  await c.env.DB.prepare(`INSERT INTO review_urgency_preferences(subject_key,subject_version,suppressed,actor,updated_at)
+    VALUES(?,?,?,?,?) ON CONFLICT(subject_key) DO UPDATE SET subject_version=excluded.subject_version,
+    suppressed=excluded.suppressed,actor=excluded.actor,updated_at=excluded.updated_at`).bind(row.key, row.version, Number(input.data.suppressed), c.get('who'), new Date().toISOString()).run();
+  } catch (error) {
+    if (!missingUrgencyPreferences(error)) throw error;
+    return c.json({ error: '排序偏好暂不可用，请先应用紧急审核迁移；其他审核操作仍可使用' }, 503);
+  }
+  return c.json({ ok: true });
+});
 
 screeningAdminRoutes.get('/profiles/:platformId', async c => {
   const row = await c.env.DB.prepare('SELECT profile_json FROM platform_profiles WHERE platform_id=?').bind(c.req.param('platformId')).first<{ profile_json: string }>();

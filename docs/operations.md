@@ -28,6 +28,7 @@ npx tsx .claude/skills/yangmao-review/scripts/offer.ts plan <短码> patch.json
 | 读取队列/线索/条目，编辑/审批/建议/核验记录/复测 | 可 | 可 |
 | 线索忽略/重试/补录，提交信源或平台 | 可 | 可 |
 | 下架/撤回、平台准入、启用自动上架 | 不可 | 可 |
+| 查看紧急队列 / 调整全局紧急排序 | 仅查看 | 可 |
 | 健康/分析、发送通知、处理送达台账 | 不可 | 可 |
 
 条目页「✏️ 在线编辑」（2026-10-18）：本浏览器已用管理员或审核员密钥登录时显示，复用审核卡片的编辑表单，经 `GET/POST /api/admin/offers/:ref(/edit)` 按审核版本保存，字段合同、会员目录与上架检查照常；身份管理的条目保存为待发布修改，须在同一面板按新版本点“通过”才公开，审核员同样不能下架或标亲测。以`src/worker/admin.ts`的`REVIEWER_ALLOWED`为准。`REVIEWER_TOKENS`使用name:token列表，令牌至少16字符。角色能力不扩大本次任务授权。平台准入不等于条目批准；`reject`对已上架条目持久保存被拒证据后移除更新提案，误收条目用`unpublish`，官方明确撤回用`withdraw`并保存官方链接及理由。
@@ -157,6 +158,8 @@ OpenRouter默认备用为`openrouter/free`；404须检查模型可用性，不�
 `ym leads`同时输出reviewVersion；`ym dismiss <线索ID> --version <reviewVersion>`使用查看时版本，避免旧指令覆盖已完成结果。线索页面的关联/结束/重试也检查版本。
 
 ## 线索筛选（影子模式）
+
+待审页紧急区及核实队列的排序偏好使用 `0051_review_urgency_preferences.sql`（PR #90 原 0049 已重编号，避免与主线迁移冲突）。发布负责人须先核对目标环境迁移台账、备份相关数据，应用迁移后再部署。未应用时队列仍可读，只有偏好写入明确返回 503；其他数据库错误仍上报。偏好只随权益内容或材料版本变化失效，领取核实租约不会清除；管理员调整时清理已结束且超过 30 天的旧偏好，保留活跃对象。回滚 Worker 不需要删除此独立表，不能由回滚代码推断数据库已回滚。此次修复仅提交 PR，未执行远端迁移或部署。
 
 里程碑 1（2026-10-13 上线）在身份系统之前为每条新线索记录筛选判定与紧急度（P0–P3），**不关闭、不关联、不重排、不发布**（管理员批准的入口过滤规则除外，见下）。开关为 Worker 与 GitHub 变量 `SCREENING_MODE=off|shadow|suggest|auto`（现为 `shadow`）；`SCREENING_MODELS` 为固定的 OpenRouter `:free` 模型（逗号分隔，校准前按顺序兜底）；可选 `SCREENING_PAID_MODEL` 与 `SCREENING_PAID_PRICE_IN/OUT` 仅供 P0 兜底。每次调用经预算台账预留/结算：筛选单独记账（`SCREENING_MONTHLY_CAP_CNY`，默认 72），免费池每日 1000 次（P0/P1 预留 200、非紧急 ≤800、回填 ≤400）。后续阶段与门槛见[实施计划](superpowers/plans/2026-10-12-lead-screening-redesign.md)。
 

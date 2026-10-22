@@ -43,14 +43,49 @@ let META = { lastSuccessfulCollect: null };
 let COVERAGE = null;
 let MEMBERSHIP_CATALOG = { revision: 0, products: [], plans: [] };
 let MEMBERSHIP_CATALOG_OK = false;
+let MEMBERSHIP_REQUEST_REVISION = 0;
+let MEMBERSHIP_APPLIED_REVISION = 0;
+let DATA_LOAD_REVISION = 0;
 
-async function loadData({ fresh = false } = {}) {
+function validMembershipCatalog(catalog) {
+  return !!catalog && Number.isInteger(catalog.revision) && Array.isArray(catalog.products) && Array.isArray(catalog.plans);
+}
+function applyMembershipCatalog(catalog, revision) {
+  if (revision < MEMBERSHIP_APPLIED_REVISION || !validMembershipCatalog(catalog)) return;
+  if (MEMBERSHIP_CATALOG_OK && catalog.revision < MEMBERSHIP_CATALOG.revision) return;
+  MEMBERSHIP_CATALOG = catalog;
+  MEMBERSHIP_CATALOG_OK = true;
+  MEMBERSHIP_APPLIED_REVISION = revision;
+}
+async function loadMembershipCatalog(get) {
+  const revision = ++MEMBERSHIP_REQUEST_REVISION;
+  const catalog = await get('/memberships');
+  if (!validMembershipCatalog(catalog)) throw new Error('目录响应无效');
+  applyMembershipCatalog(catalog, revision);
+  return MEMBERSHIP_CATALOG;
+}
+
+async function loadData({ fresh = false, deferExtras = false, onSupplement = () => {} } = {}) {
+  const revision = ++DATA_LOAD_REVISION;
+  const initial = window.YM_INITIAL_REQUESTS;
+  window.YM_INITIAL_REQUESTS = null;
   const stamp = Date.now();
-  const get = async p => { const url = fresh ? `${p}${p.includes('?') ? '&' : '?'}fresh=${stamp}` : p; const r = await fetch(url, { ...(fresh ? { cache: 'no-store' } : {}), headers: { Accept: 'application/json' } }); if (!r.ok) throw new Error(`${p} ${r.status}`); return r.json(); };
+  const get = async p => {
+    if (!fresh && initial?.has(p)) {
+      const result = await initial.get(p);
+      if (!result.ok) throw result.error;
+      return result.value;
+    }
+    const url = fresh ? `${p}${p.includes('?') ? '&' : '?'}fresh=${stamp}` : p;
+    const r = await fetch(url, { ...(fresh ? { cache: 'no-store' } : {}), headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error(`${p} ${r.status}`);
+    return r.json();
+  };
   // A new response contract must not reuse a browser/CDN entry without valuation metadata.
-  const [pl, of, meta, cov, memberships] = await Promise.all([get('/api/platforms'), get('/api/offers?view=all&valuation=v2&schema=valuation-v2-public-inputs&lifecycle=approved-contract-v1&models=models-v1-2026-10-19'), get('/api/meta?schema=partial-fetch-v1'), get('/api/coverage?schema=partial-fetch-v1').catch(() => null), get('/api/memberships').catch(() => null)]);
-  MEMBERSHIP_CATALOG_OK = !!memberships && Number.isInteger(memberships.revision) && Array.isArray(memberships.products) && Array.isArray(memberships.plans);
-  if (MEMBERSHIP_CATALOG_OK) MEMBERSHIP_CATALOG = memberships;
+  const coverage = get('/api/coverage?schema=partial-fetch-v1').catch(() => null);
+  const membershipRevision = ++MEMBERSHIP_REQUEST_REVISION;
+  const membership = get('/api/memberships').catch(() => null);
+  const [pl, of, meta] = await Promise.all([get('/api/platforms'), get('/api/offers?view=all&valuation=v2&schema=valuation-v2-public-inputs&lifecycle=approved-contract-v1&models=models-v1-2026-10-19'), get('/api/meta?schema=partial-fetch-v1')]);
   const now = Date.now(), DAYMS = 864e5;
   const t0 = new Date(); t0.setHours(0, 0, 0, 0);
   const rel = d => (d ? Math.round((new Date(d + 'T00:00:00') - t0) / DAYMS) : null);
@@ -75,5 +110,19 @@ async function loadData({ fresh = false } = {}) {
     };
   });
   META = meta;
-  COVERAGE = cov;
+  // 两份附加信息独立补齐；旧请求晚到不能覆盖较新的刷新结果。
+  const supplements = Promise.all([
+    coverage.then(cov => {
+      if (revision !== DATA_LOAD_REVISION) return;
+      COVERAGE = cov;
+      if (deferExtras) onSupplement();
+    }),
+    membership.then(memberships => {
+      if (revision !== DATA_LOAD_REVISION) return;
+      applyMembershipCatalog(memberships, membershipRevision);
+      if (deferExtras) onSupplement();
+    }),
+  ]);
+  if (!deferExtras) await supplements;
+  return { supplements };
 }

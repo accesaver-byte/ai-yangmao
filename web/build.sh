@@ -10,15 +10,17 @@ mkdir -p public/vendor
   cat web/src/head.html
   echo '</head><body>'
   cat web/src/body.html
-  echo '<script src="/vendor/echarts.min.js"></script><script src="/membership-core.js"></script><script src="/model-names.js"></script><script src="/app.js"></script></body></html>'
+  echo '<script src="/initial-data.js"></script><script src="/vendor/echarts.min.js"></script><script src="/membership-core.js"></script><script src="/model-names.js"></script><script src="/app.js"></script></body></html>'
 } > public/index.html
 node --input-type=module -e 'import { build } from "esbuild"; await build({entryPoints:["src/shared/membership.ts"],bundle:true,format:"iife",globalName:"YMMembership",platform:"browser",outfile:"public/membership-core.js"});'
 node --input-type=module -e 'import { build } from "esbuild"; await build({entryPoints:["src/shared/model-names.ts"],bundle:true,format:"iife",globalName:"YMModels",platform:"browser",outfile:"public/model-names.js"});'
-cat web/src/data.js web/src/membership.js web/src/app.js > public/app.js
+cat web/src/data.js web/src/membership.js web/src/urgent-review.js web/src/app.js > public/app.js
 cp node_modules/echarts/dist/echarts.min.js public/vendor/echarts.min.js
 cp web/_headers public/_headers
 cp web/src/theme.js public/theme.js
+cp web/src/initial-data.js public/initial-data.js
 node scripts/build-public-skill.mjs
 node --check public/theme.js
+node --check public/initial-data.js
 node --check public/app.js
 echo "built public/index.html ($(wc -c < public/index.html) bytes)"

@@ -7,7 +7,9 @@ const entry=(id:string,name:string)=>({id,name,aliases:[],status:'verified' as c
 const catalog={revision:1,vendors:[{id:'alpha',name:'Alpha',status:'available'},{id:'beta',name:'Beta',status:'available'},{id:'api',name:'API Vendor',status:'none',sourceUrl:'https://official.example/pricing'}],products:[{...entry('a','Alpha'),platformIds:['alpha']},{...entry('b','Beta'),platformIds:['beta']}],plans:[{...entry('a-pro','Alpha Pro'),productId:'a',billing:'paid' as const},{...entry('a-max','Alpha Max'),productId:'a',billing:'paid' as const},{...entry('b-pro','Beta Pro'),productId:'b',billing:'paid' as const}]};
 function fixture(){
  const {document,window}=parseHTML('<form><div data-membership-editor></div></form><div id="owned"></div>');
- const ctx=vm.createContext({document,window,structuredClone,YMMembership:core,MEMBERSHIP_CATALOG:catalog,MEMBERSHIP_CATALOG_OK:true,adm:async()=>catalog,esc:(s:unknown)=>String(s),C:{subscriptions:[]},LS:{set(){}},computeRace(){},computeTrend(){},RACE:null,TREND:null,drawCondBtn(){},render(){}});
+ const ctx=vm.createContext({document,window,structuredClone,YMMembership:core,initialCatalog:catalog,adm:async()=>catalog,esc:(s:unknown)=>String(s),C:{subscriptions:[]},LS:{set(){}},computeRace(){},computeTrend(){},RACE:null,TREND:null,drawCondBtn(){},render(){}});
+ vm.runInContext(readFileSync('web/src/data.js','utf8'),ctx);
+ vm.runInContext('MEMBERSHIP_CATALOG=initialCatalog;MEMBERSHIP_CATALOG_OK=true;',ctx);
  vm.runInContext(readFileSync('web/src/membership.js','utf8'),ctx);
  const change=(selector:string,value?:string,checked?:boolean)=>{const i=document.querySelector(selector)!;expect(i).not.toBeNull();if(value!==undefined)Object.defineProperty(i,'value',{configurable:true,value});if(checked!==undefined){Object.defineProperty(i,'checked',{configurable:true,value:checked});i.toggleAttribute('checked',checked);}i.dispatchEvent(new window.Event('change',{bubbles:true}));};
  return {document,ctx,change};

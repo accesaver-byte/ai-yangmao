@@ -19,6 +19,7 @@ import { leadPriority } from '../shared/leads';
 import { claimEndAt } from '../shared/lifecycle';
 import { officialTier, officialReviewDue, OFFICIAL_REVIEW_LEASE_MS, type OfficialReview } from '../shared/official-review';
 import type { Env } from './index';
+import { readUrgentReview, readUrgentReviews, urgentFirst } from './screening/urgent-review';
 const db=(env:Env)=>drizzle(env.DB,{schema:s});
 export const officialReviewRoutes=new Hono<{Bindings:Env}>();
 async function context(env:Env,id:string) {
@@ -39,6 +40,7 @@ const proposalVersion = (id:string, version?:string) => version
   : sql`NOT EXISTS (SELECT 1 FROM offer_proposals WHERE offer_id=${id})`;
 officialReviewRoutes.get('/queue',async c=>{
   const d=db(c.env),limit=Math.max(1,Math.min(20,Number(c.req.query('limit'))||8)),now=Date.now();
+  const urgency = new Map((await readUrgentReviews(c.env.DB,new Date(now))).filter(r=>r.offerId).map(r=>[r.offerId!,r]));
   const approved=new Set((await d.select({id:s.platforms.id}).from(s.platforms).where(eq(s.platforms.status,'approved'))).map(p=>p.id));
   const rows=await d.select().from(s.offers).where(and(inArray(s.offers.reviewState,['pending','approved']),canonicalOffers));
   const proposals=await d.select().from(s.offerProposals),byId=new Map(proposals.map(p=>[p.offerId,p]));
@@ -48,13 +50,13 @@ officialReviewRoutes.get('/queue',async c=>{
     const p=byId.get(o.id),target=p?{...o,...p.candidate} as typeof o:drafts.has(o.id)?{...o,...drafts.get(o.id)}:o;
     const recovery=o.officialReview?.status==='checking'&&now-Date.parse(o.officialReview.checkedAt)>=OFFICIAL_REVIEW_LEASE_MS&&!needsEvidence(target);
     return {o,target,recovery,eligible:!o.withdrawnAt&&(recovery||(approved.has(target.platformId)&&needsEvidence(target)&&(o.reviewState==='pending'||!!p)&&officialReviewDue(o.officialReview,now,`${o.updatedAt}|${p?.updatedAt??''}`)))};
-  }).filter(x=>x.eligible);
+  }).filter(x=>x.eligible&&(x.recovery||!urgency.get(x.o.id)?.expired));
   const rank=(x:typeof candidates[number])=>{
     if(x.recovery)return -1;
     const end=claimEndAt(x.target)?.getTime();
     return end!=null&&end>=now&&end-now<48*3600_000?0:1+leadPriority({id:0,origin:'aihot',title:x.target.title,raw:x.target.valueText});
   };
-  candidates.sort((a,b)=>rank(a)-rank(b)||(a.o.officialReview?.attempts??0)-(b.o.officialReview?.attempts??0)||a.o.discoveredAt.localeCompare(b.o.discoveredAt));
+  candidates.sort((a,b)=>{const ua=urgency.get(a.o.id),ub=urgency.get(b.o.id);return Number(b.recovery)-Number(a.recovery)||(ua&&ub?urgentFirst(ua,ub):0)||rank(a)-rank(b)||(a.o.officialReview?.attempts??0)-(b.o.officialReview?.attempts??0)||a.o.discoveredAt.localeCompare(b.o.discoveredAt);});
   const selected=candidates.slice(0,limit);
   // 与初抽一样保留积压名额，持续到来的重置/赠额不能饿死旧草稿。
   if(limit>=5&&candidates.length>limit){
@@ -75,6 +77,7 @@ officialReviewRoutes.post('/:id/claim',async c=>{
     return c.json({claimed:false,recovered:changed.length>0});
   }
   if(!state.eligible || !officialReviewDue(old,now,state.version))return c.json({claimed:false});
+  if((await readUrgentReview(c.env.DB,`offer:${state.offer.id}`,new Date(now)))?.expired)return c.json({claimed:false});
   const review:OfficialReview={identityRevision:state.identityRevision,status:'checking',jobId:crypto.randomUUID(),inputVersion:state.version,originUrl:state.target.evidence.url,attempts:(state.offer.officialReview && state.offer.officialReview.inputVersion===state.version ? state.offer.officialReview.attempts : 0)+1,checkedAt:new Date(now).toISOString(),nextAttemptAt:null,reason:'正在搜索官方出处并核对原文',queries:[],candidates:[]};
   review.unresolvedAttempts=old?.inputVersion===state.version?(old.unresolvedAttempts??(old.status==='unresolved'?old.attempts:0)):0;
   const changed=await db(c.env).update(s.offers).set({officialReview:review}).where(guard).returning({id:s.offers.id});
