@@ -67,8 +67,38 @@ screeningIngestRoutes.post('/verdicts', async c => {
     explanation: verdict.explanation, urgency: verdict.urgency, model: body.data.model, calibrated: body.data.calibrated, promptVersion: body.data.promptVersion,
     contextHash: body.data.contextHash, downgrade: body.data.downgradeReasons, mode: mode === 'off' ? 'shadow' : mode,
   });
-  return c.json({ decisionId: decision.id, mode, applied: false });
+  const applied = body.data.model === 'gate0' && c.env.SCREENING_GATE0_MODE === 'auto' && body.data.subject.kind === 'lead'
+    ? await applyGate0(c.env.DB, Number(body.data.subject.leadId ?? body.data.itemId.slice(5)), verdict) : null;
+  if (applied) await store.markApplied(decision.id, applied);
+  return c.json({ decisionId: decision.id, mode, applied: !!applied });
 });
+
+/**
+ * Stage 2 (2026-10-21): gate0's deterministic verdicts take effect on their own — 142/142 against the owner's final
+ * outcomes once self-matches were excluded. A repost of a lead the owner rejected is closed; a lead matching a listed
+ * perk is linked. Never for recurring/reset perks (a new reset round looks like the last one) or leads already in review.
+ */
+const RECURRING = /每月|每日|每周|monthly|daily|weekly|重置|reset/i;
+async function applyGate0(db: D1Database, leadId: number, verdict: { verdict: string; matchId: string | null; reasonCategory: string | null; explanation: string }): Promise<'closed' | 'linked' | null> {
+  if (!Number.isInteger(leadId) || !verdict.matchId) return null;
+  const lead = await db.prepare(`SELECT id, title, resolution FROM leads WHERE id=? AND status IN ('new','reviewing')`).bind(leadId).first<{ id: number; title: string | null; resolution: string | null }>();
+  if (!lead || (lead.resolution && (JSON.parse(lead.resolution) as { identityTaskIds?: string[] }).identityTaskIds?.length) || RECURRING.test(lead.title ?? '')) return null;
+  const now = new Date().toISOString();
+  if (verdict.verdict === 'duplicate_rejected' && verdict.matchId.startsWith('lead:')) {
+    const resolution = { status: 'closed', jobId: `gate0-${leadId}`, attempts: 0, inconclusive: 0, checkedAt: now, nextAttemptAt: null, reason: `入口查重：与已拒绝的线索 #${verdict.matchId.slice(5)} 是同一帖的转发`, queries: [], candidates: [], gate0: true };
+    const r = await db.prepare(`UPDATE leads SET status='rejected', resolution=? WHERE id=? AND status IN ('new','reviewing')`).bind(JSON.stringify(resolution), leadId).run();
+    return r.meta.changes ? 'closed' : null;
+  }
+  if (verdict.verdict === 'duplicate_published' && verdict.matchId.startsWith('offer:')) {
+    const offerId = verdict.matchId.slice(6);
+    const offer = await db.prepare(`SELECT id, title, value_text, tags FROM offers WHERE id=? AND review_state='approved'`).bind(offerId).first<{ id: string; title: string; value_text: string; tags: string }>();
+    if (!offer || JSON.parse(offer.tags || '[]').includes('reset') || RECURRING.test(`${offer.title} ${offer.value_text}`)) return null;
+    const resolution = { status: 'linked', jobId: `gate0-${leadId}`, attempts: 0, inconclusive: 0, checkedAt: now, nextAttemptAt: null, reason: '入口查重：与已上架活动相同', queries: [], candidates: [], offerIds: [offerId], gate0: true };
+    const r = await db.prepare(`UPDATE leads SET status='linked', offer_id=?, resolution=? WHERE id=? AND status IN ('new','reviewing')`).bind(offerId, JSON.stringify(resolution), leadId).run();
+    return r.meta.changes ? 'linked' : null;
+  }
+  return null;
+}
 
 screeningIngestRoutes.get('/queue', async c => {
   const limit = Math.min(50, Math.max(1, Number(c.req.query('limit') ?? 50) || 50));

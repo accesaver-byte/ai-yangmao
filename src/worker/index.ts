@@ -74,6 +74,8 @@ export interface Env {
   GH_DISPATCH_TOKEN?: string; // 只对本仓库有 Actions 写权限的令牌，用于准点触发采集
   GH_REPO?: string;
   SCREENING_MODE?: string;
+  /** 'auto' applies gate0's deterministic repost/duplicate verdicts to leads; model verdicts follow SCREENING_MODE. */
+  SCREENING_GATE0_MODE?: string;
   SCREENING_MONTHLY_CAP_CNY?: string;
   OPENROUTER_FREE_DAILY?: string;
   SCREENING_URGENT_RESERVE?: string;
