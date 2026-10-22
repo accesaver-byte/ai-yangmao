@@ -245,7 +245,7 @@ async function runSource(src: Source) {
       };
       await publishReset([],true); // 已绑定的官方候选不依赖 AIHOT 上游此刻可用。
       const leads=await aihot(src);
-      await fetchedLeads(leads);
+      await fetchedLeads(leads.map(({aihotEvent:_event,...lead})=>lead));
       await publishReset(leads,false);
     }
     else if (src.kind === 'hn') await fetchedLeads(await hn(src));

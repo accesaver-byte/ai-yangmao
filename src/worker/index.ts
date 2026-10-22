@@ -76,6 +76,8 @@ export interface Env {
   SCREENING_MODE?: string;
   /** 'auto' applies gate0's deterministic repost/duplicate verdicts to leads; model verdicts follow SCREENING_MODE. */
   SCREENING_GATE0_MODE?: string;
+  /** Pinned screening models whose 'duplicate of a listed perk' closes a dedupe card (comma separated); empty = shadow. */
+  SCREENING_DUPLICATE_MODELS?: string;
   SCREENING_MONTHLY_CAP_CNY?: string;
   OPENROUTER_FREE_DAILY?: string;
   SCREENING_URGENT_RESERVE?: string;

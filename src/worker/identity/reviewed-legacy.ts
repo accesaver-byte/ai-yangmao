@@ -56,6 +56,11 @@ return {entityId:row.entity_id,versionId:row.version_id,decisionId:row.decision_
  * the extractor invents a new ID slug and new wording on every run, which let most re-reads through to the owner.
  * Same vendor, same normalized page URL, the approved benefit quote still on the page (tolerant of reflow, width and
  * punctuation), and the candidate states no amount, model or requirement the approved terms lack.
+ *
+ * 2026-10-22 (admin): a page the owner already confirmed "same as" an approved perk counts as its page too — locale and
+ * listing variants (/zh/pricing for /pricing, x.ai/news for the article) reopened a card on every crawl (Tripo 13 in 8
+ * days). The quote the owner confirmed from that page then anchors the re-read. Registered official pages a vendor only
+ * serves through a reader (Jina, fetch_kind indirect) are accepted for this narrow check.
  */
 export async function findSameSourceReread(db:D1Database,raw:string,facts:CanonicalTermsV1,observationId:string,sourceFetchId:string|null):Promise<ReviewedLegacyMatch|null>{
  if(hasKnownTerms(facts))return null;
@@ -68,21 +73,30 @@ export async function findSameSourceReread(db:D1Database,raw:string,facts:Canoni
   WHERE e.platform_id=? AND e.state='active' AND o.review_state='approved' AND o.withdrawn_at IS NULL
   AND NOT EXISTS(SELECT 1 FROM review_decisions other WHERE other.entity_id=e.id AND other.action='reject' AND (other.version_id=v.id OR json_extract(other.scope_json,'$.kind')='entity_alias') AND NOT EXISTS(SELECT 1 FROM review_decisions n WHERE n.supersedes_id=other.id))
   ORDER BY d.created_at DESC LIMIT 200`).bind(offer.platformId).all<{entity_id:string;business_revision:number;canonical_offer_id:string;updated_at:string;offer_evidence:string;version_id:string;display_candidate_json:string;decision_id:string;site:string|null;x_handles:string;staff_handles:string;wechat:string|null}>()).results;
- const onPage=rows.filter(row=>{const url=(JSON.parse(row.offer_evidence) as {url?:string}).url;return !!url&&normalizeDocumentUrl(url)===page;});
+ if(!rows.length)return null;
+ const confirmed=(await db.prepare(`SELECT d.entity_id,json_extract(c.raw_candidate_json,'$.candidate.evidence.url') url,json_extract(c.raw_candidate_json,'$.candidate.evidence.excerpts.benefit') quote
+  FROM review_decisions d JOIN intake_candidates c ON c.id=d.candidate_id
+  WHERE d.action='same' AND d.actor NOT LIKE 'policy:%' AND d.entity_id IN (SELECT value FROM json_each(?)) AND NOT EXISTS(SELECT 1 FROM review_decisions n WHERE n.supersedes_id=d.id)
+  ORDER BY d.created_at DESC LIMIT 400`).bind(JSON.stringify(rows.map(row=>row.entity_id))).all<{entity_id:string;url:string|null;quote:string|null}>()).results;
+ const confirmedQuotes=new Map<string,string[]>();
+ for(const row of confirmed)if(row.url&&row.quote?.trim()&&normalizeDocumentUrl(row.url)===page)confirmedQuotes.set(row.entity_id,[...(confirmedQuotes.get(row.entity_id)??[]),row.quote]);
+ const onPage=rows.filter(row=>{const url=(JSON.parse(row.offer_evidence) as {url?:string}).url;return !!url&&normalizeDocumentUrl(url)===page||confirmedQuotes.has(row.entity_id);});
  if(!onPage.length)return null;
  const sources=(await db.prepare('SELECT url,tier FROM sources WHERE platform_id=?').bind(offer.platformId).all<{url:string;tier:string}>()).results;
  const first=onPage[0],platform={id:offer.platformId,name:offer.platformId,site:first.site,xHandles:JSON.parse(first.x_handles||'[]'),staffHandles:JSON.parse(first.staff_handles||'[]'),wechat:first.wechat};
  if(!['site','docs','official'].includes(officialTier(offer.evidence.url,platform,sources)??''))return null;
- const obs=await db.prepare("SELECT o.text,coalesce(json_extract(f.provenance_json,'$.truncated'),o.text_truncated) truncated,coalesce(f.provenance_json,o.trust_json) trust_json FROM source_observations o LEFT JOIN source_observation_fetches f ON f.id=? AND f.observation_id=o.id WHERE o.id=?").bind(sourceFetchId,observationId).first<{text:string;truncated:number|null;trust_json:string}>();
- if(!obs||obs.truncated)return null;
+ const obs=await db.prepare("SELECT o.text,o.fetch_kind,o.final_url,coalesce(json_extract(f.provenance_json,'$.truncated'),o.text_truncated) truncated,coalesce(f.provenance_json,o.trust_json) trust_json FROM source_observations o LEFT JOIN source_observation_fetches f ON f.id=? AND f.observation_id=o.id WHERE o.id=?").bind(sourceFetchId,observationId).first<{text:string;fetch_kind:string;final_url:string;truncated:number|null;trust_json:string}>();
+ if(!obs||obs.truncated||obs.fetch_kind==='unavailable')return null;
  const trust=JSON.parse(obs.trust_json) as {sourceVerified?:boolean;productId?:string|null};
- if(trust.sourceVerified!==true||trust.productId!==offer.platformId)return null;
+ // A reader fetch is never "verified"; the registered official URL above and the quote below carry this check. A
+ // redirect to another page is also "indirect" and stays out.
+ if(obs.fetch_kind==='indirect'?normalizeDocumentUrl(obs.final_url)!==page||trust.productId!=null&&trust.productId!==offer.platformId:trust.sourceVerified!==true||trust.productId!==offer.platformId)return null;
  // Several approved perks can share one page (a pricing page); keep those whose approved quote is still on it and
  // which the candidate's anchors fit. Exactly one must remain, otherwise the owner decides.
  const fitting=onPage.filter(row=>{
   const approved=offerIn.safeParse(JSON.parse(row.display_candidate_json)),stored=JSON.parse(row.offer_evidence) as {excerpts?:{benefit?:string}};
   const benefit=(approved.success?approved.data.evidence.excerpts.benefit:undefined)??stored.excerpts?.benefit;
-  if(!benefit?.trim()||!pageContains(obs.text,benefit))return false;
+  if(!(benefit?.trim()&&pageContains(obs.text,benefit))&&!(confirmedQuotes.get(row.entity_id)??[]).some(quote=>pageContains(obs.text,quote)))return false;
   const a=approved.success?approved.data:null;
   const texts=[a?.title,a?.valueText,a?.creditValidity,...(a?.steps??[]),...Object.values(a?.evidence.excerpts??stored.excerpts??{})].filter((x):x is string=>!!x);
   return introducesNothingNew(offer,{texts,models:a?.models,requirements:a?.requirements});

@@ -9,8 +9,11 @@ export interface Source { id: string; kind: string; url: string; tier: string; p
 
 const AIHOT_UA = { 'User-Agent': UA, Accept: 'application/json' };
 
+/** A reset lead keeps AIHOT's structured event for the reset policy; it is not posted with the lead. */
+export type AiHotLead = LeadIn & { aihotEvent?: unknown };
+
 /** AIHOT：Codex 重置接口 → 每条员工原帖一条线索；全部动态 → 命中羊毛关键词的条目。 */
-export async function aihot(src: Source): Promise<LeadIn[]> {
+export async function aihot(src: Source): Promise<AiHotLead[]> {
   const res = await fetchRetry(src.url, { headers: AIHOT_UA, signal: AbortSignal.timeout(30000) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const j = await res.json() as Record<string, unknown>;
@@ -51,6 +54,7 @@ export async function aihot(src: Source): Promise<LeadIn[]> {
           origin: 'aihot' as const, url: main.url!,
           title: `Codex ${e.displayLabel ?? ''}：${e.title ?? ''}（${e.occurredOn ?? when}）`.slice(0, 300),
           raw: [`事件时间：${when}`, ...posts.map(p => `${p.at != null ? new Date(p.at).toISOString() : ''} ${p.url}\n${postText(p)}`)].join('\n').slice(0, 4000),
+          aihotEvent: e,
         }];
       });
   }
