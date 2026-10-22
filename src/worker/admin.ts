@@ -883,7 +883,10 @@ async function recordDeliveryResult(env:Env,delivery:typeof s.deliveries.$inferS
  const eligible=manual?"status IN ('pending','unknown')":"status='pending'";
  const gate=`EXISTS(SELECT 1 FROM deliveries WHERE id=? AND ${eligible})`,statements:D1PreparedStatement[]=[];
  if(status==='sent'){
-  for(const mark of notice.marks??[])statements.push(env.DB.prepare(`INSERT INTO notifications(offer_id,stage,channel,status,sent_at,message_id) SELECT ?,?,?,'sent',?,? WHERE ${gate} ON CONFLICT(offer_id,stage,channel) DO UPDATE SET status='sent',sent_at=excluded.sent_at,message_id=excluded.message_id`).bind(mark.offerId,mark.stage,delivery.channel,now,mark.messageId??null,delivery.id));
+  // One statement for all marks: a digest can carry 100+ items and admin requests share a 50-statement budget
+  // (2026-10-22: the 10-08 digest with 117 marks could never be confirmed — 500 「服务暂不可用」).
+  const marks=(notice.marks??[]).map(m=>({offerId:m.offerId,stage:m.stage,messageId:m.messageId??null}));
+  if(marks.length)statements.push(env.DB.prepare(`INSERT INTO notifications(offer_id,stage,channel,status,sent_at,message_id) SELECT json_extract(m.value,'$.offerId'),json_extract(m.value,'$.stage'),?,'sent',?,json_extract(m.value,'$.messageId') FROM json_each(?) m WHERE ${gate} AND EXISTS(SELECT 1 FROM offers o WHERE o.id=json_extract(m.value,'$.offerId')) ON CONFLICT(offer_id,stage,channel) DO UPDATE SET status='sent',sent_at=excluded.sent_at,message_id=excluded.message_id`).bind(delivery.channel,now,JSON.stringify(marks),delivery.id));
   const ids=[...(notice.marks??[]).flatMap(m=>m.eventId?[m.eventId]:[]),...(notice.reviewAlerts??[]).flatMap(a=>a.eventId?[a.eventId]:[])];
   if(ids.length)statements.push(env.DB.prepare(`UPDATE identity_events SET status='delivered' WHERE id IN (SELECT value FROM json_each(?)) AND ${gate}`).bind(JSON.stringify(ids),delivery.id));
  }
