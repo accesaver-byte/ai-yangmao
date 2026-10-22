@@ -1,3 +1,4 @@
+import { amounts } from '../../shared/identity/perk-anchors';
 import { IdentityError } from '../identity/store';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -78,6 +79,8 @@ screeningIngestRoutes.post('/verdicts', async c => {
  * outcomes once self-matches were excluded. A repost of a lead the owner rejected is closed; a lead matching a listed
  * perk is linked. Never for recurring/reset perks (a new reset round looks like the last one) or leads already in review.
  */
+/** Amounts both sides state, with none in common: a different perk. */
+function anchorsConflict(a: string, b: string): boolean { const x = amounts(a), y = amounts(b); return x.size > 0 && y.size > 0 && ![...x].some(v => y.has(v)); }
 const RECURRING = /每月|每日|每周|monthly|daily|weekly|重置|reset/i;
 async function applyGate0(db: D1Database, leadId: number, verdict: { verdict: string; matchId: string | null; reasonCategory: string | null; explanation: string }): Promise<'closed' | 'linked' | null> {
   if (!Number.isInteger(leadId) || !verdict.matchId) return null;
@@ -93,6 +96,8 @@ async function applyGate0(db: D1Database, leadId: number, verdict: { verdict: st
     const offerId = verdict.matchId.slice(6);
     const offer = await db.prepare(`SELECT id, title, value_text, tags FROM offers WHERE id=? AND review_state='approved'`).bind(offerId).first<{ id: string; title: string; value_text: string; tags: string }>();
     if (!offer || JSON.parse(offer.tags || '[]').includes('reset') || RECURRING.test(`${offer.title} ${offer.value_text}`)) return null;
+    // A genuine new perk can read like a listed one; conflicting amounts or models mean it is not the same perk.
+    if (anchorsConflict(lead.title ?? '', `${offer.title} ${offer.value_text}`)) return null;
     const resolution = { status: 'linked', jobId: `gate0-${leadId}`, attempts: 0, inconclusive: 0, checkedAt: now, nextAttemptAt: null, reason: '入口查重：与已上架活动相同', queries: [], candidates: [], offerIds: [offerId], gate0: true };
     const r = await db.prepare(`UPDATE leads SET status='linked', offer_id=?, resolution=? WHERE id=? AND status IN ('new','reviewing')`).bind(offerId, JSON.stringify(resolution), leadId).run();
     return r.meta.changes ? 'linked' : null;
