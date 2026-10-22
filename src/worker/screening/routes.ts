@@ -10,6 +10,7 @@ import { compareQueueOrder, latestUsefulReviewAt, systemDueAt } from '../../shar
 import { buildMemoryPage, reviewerNames } from './memory';
 import { ScreeningStore } from './store';
 import { confirmAutoClosed, listAutoClosed, markWronglyClosed } from './spot-check';
+import { applyModelDuplicate, applyRecordedModelDuplicates, confirmModelClosedCard, listModelClosedCards, trustedDuplicateModels, undoModelClosedCard } from './model-duplicate';
 import { activeTitleRules, applyRuleToOpenLeads, createIntakeRule, listIntakeRules, retireIntakeRule, RuleError, suggestIntakeRules } from './intake-rules';
 import type { Env } from '../index';
 
@@ -69,7 +70,9 @@ screeningIngestRoutes.post('/verdicts', async c => {
     contextHash: body.data.contextHash, downgrade: body.data.downgradeReasons, mode: mode === 'off' ? 'shadow' : mode,
   });
   const applied = body.data.model === 'gate0' && c.env.SCREENING_GATE0_MODE === 'auto' && body.data.subject.kind === 'lead'
-    ? await applyGate0(c.env.DB, Number(body.data.subject.leadId ?? body.data.itemId.slice(5)), verdict) : null;
+    ? await applyGate0(c.env.DB, Number(body.data.subject.leadId ?? body.data.itemId.slice(5)), verdict)
+    : body.data.subject.kind === 'task' && trustedDuplicateModels(c.env).includes(body.data.model)
+      ? await applyModelDuplicate(c.env.DB, String(body.data.subject.taskId ?? body.data.itemId.slice(5)), verdict, { decisionId: decision.id, model: body.data.model }) : null;
   if (applied) await store.markApplied(decision.id, applied);
   return c.json({ decisionId: decision.id, mode, applied: !!applied });
 });
@@ -225,6 +228,24 @@ screeningAdminRoutes.post('/rules/:id/retire', async c => {
   const body = await c.req.json().catch(() => ({})) as { reason?: string };
   try { await retireIntakeRule(c.env.DB, c.req.param('id'), body.reason || '管理员停用', c.get('who')); return c.json({ ok: true }); }
   catch (error) { if (error instanceof RuleError) return c.json({ error: error.message }, error.status); throw error; }
+});
+
+/** Dedupe cards the screening model closed as duplicates of a listed perk: confirm, or undo back into the queue (admin only). */
+screeningAdminRoutes.get('/spot-check/cards', async c => c.json({ cards: await listModelClosedCards(c.env.DB, Math.min(30, Math.max(1, Number(c.req.query('days') ?? 7) || 7))) }));
+screeningAdminRoutes.post('/spot-check/cards/:id/confirm', async c => {
+  try { return c.json(await confirmModelClosedCard(c.env.DB, c.req.param('id'), c.get('who'))); }
+  catch (error) { if (error instanceof IdentityError) return c.json({ error: error.message }, error.status); throw error; }
+});
+screeningAdminRoutes.post('/spot-check/cards/:id/undo', async c => {
+  try { return c.json(await undoModelClosedCard(c.env.DB, c.req.param('id'), c.get('who'))); }
+  catch (error) { if (error instanceof IdentityError) return c.json({ error: error.message }, error.status); throw error; }
+});
+/** One-off: apply recorded trusted verdicts to cards opened before the switch. Dry run unless dryRun=false. */
+screeningAdminRoutes.post('/model-duplicates/apply', async c => {
+  const body = z.object({ dryRun: z.boolean().default(true), cursor: z.string().max(200).nullish() }).safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) return c.json({ error: '格式不正确' }, 400);
+  try { return c.json(await applyRecordedModelDuplicates(c.env.DB, c.env, body.data)); }
+  catch (error) { if (error instanceof IdentityError) return c.json({ error: error.message }, error.status); throw error; }
 });
 
 /** Spot-check of leads the system closed by itself (admin only). */

@@ -164,6 +164,17 @@ OpenRouter默认备用为`openrouter/free`；404须检查模型可用性，不�
 
 Worker 变量 `SCREENING_GATE0_MODE=auto`（与 `SCREENING_MODE` 分开，模型判断仍为 `shadow`）：gate0 的确定性判断直接作用于线索——与管理员已拒绝线索相同的转帖关闭（`resolution.gate0=true`），与已上架活动相同的线索关联。按最终结果核对 142/142（排除自我匹配后）。不处理：标题或活动含每日/每周/每月/重置等周期词的线索与活动、已关联查重卡的线索。回滚：把该变量改成 `shadow`。防误判：线索与已上架活动的金额都写明但无一相同时不自动关联；系统自动关联的线索进入「🔍 自动关闭抽查」（标“系统判为重复并关联”），点「↩ 不是重复，放回队列」即解除关联、回到线索队列。模型固定为 `SCREENING_MODELS=nvidia/nemotron-3-ultra-550b-a55b:free,minimax/minimax-m3.1-flash:free`（2026-10-21 当日 29 张卡盲测：重复判断 21/21、19/19）。模型判断计划 2026-10-28 复核，要求关闭精确率 ≥97% 且周期/重置类零误关。
 
+### 查重卡：页面记忆、阅读器页面与模型结案（2026-10-22）
+
+起因：10-12 起每天新开 24–64 张查重卡，10-15 以来 253 张全部人工结案，其中 75% 是已上架权益的重复；约七成来自每 6 小时的官方页面重抓，而不是线索。gate0（仅线索、仅精确转帖）不处理查重卡。同页重读几乎不生效：已批准条目的证据地址常是兄弟页面（`/zh/pricing` 对 `/pricing`、x.ai/news 列表对文章页），管理员的“与 X 相同”不被记住，下一轮重抓又开新卡（Tripo 8 天 13 张）。
+
+- **页面记忆**（`findSameSourceReread`）：管理员（非 `policy:` 署名）确认过“与 X 相同”的候选所在页面，视同 X 的页面；当时确认的原文仍在页面上即可作为锚，其余条件不变（官方登记页面、未截断、候选无新金额/模型/门槛、恰好一条符合）。只作用于确认时的那一个页面。
+- **阅读器页面**：仅能经 Jina 读取（`fetch_kind=indirect`）的已登记官方页面可用于同页重读；最终地址须仍是同一页面（跨站跳转不算），原文锚与“无新内容”守卫不变。
+- **模型结案**（`src/worker/screening/model-duplicate.ts`）：Worker 变量 `SCREENING_DUPLICATE_MODELS`（逗号分隔，填 `SCREENING_MODELS` 中的固定模型）中的模型对查重卡给出 `duplicate_published`、置信度 ≥0.9 时，经守卫后按 `duplicate` 拒绝结案，署名 `policy:screening-duplicate-v1`，理由写明已上架 X。守卫：卡片仍开放、X 已批准且未撤下、同平台、候选金额/模型/门槛都在 X 的批准条款中、非重置、定期活动（有截止日期且含每日/每周/每月）不处理、候选日期不超出 X 的窗口、管理员未曾对该来源撤销过模型结案。`openrouter/free` 兜底模型不在名单内，永不结案。变量为空即恢复影子模式。
+- **抽查与撤销**：「自动关闭抽查」顶部「🤖 系统查重结案」列出未确认的模型结案；「✅ 关得对」记为确认，「↩ 不是重复，放回队列」按原拒绝 `reopenDecision` 重开查重卡（保留拒绝历史，不自动批准）。接口（仅管理员）：`GET /api/admin/screening/spot-check/cards`、`POST .../cards/:id/confirm`、`POST .../cards/:id/undo`。
+- **存量卡**：上线前已有模型判定的卡不会再筛选。`POST /api/admin/screening/model-duplicates/apply` 默认演练，只报告“would close / keep: 原因”；`{"dryRun":false}` 才结案，每请求 2 张，按 `nextCursor` 续传。
+- 线索产生的查重卡由官方复核路径创建，目前没有卡片级模型判定，模型结案暂不覆盖；线索级判定只在抽查与校准中使用。
+
 ### 入口过滤规则（2026-10-16）
 
 模型筛选仍是影子模式，但**管理员批准的标题规则例外**：线索写入时（`POST /api/ingest/leads`）按 `screening_rules` 中启用的 `title_pattern` 匹配标题，命中即关闭线索（`status=rejected`，经身份系统留拒绝记录），不再研判、搜索或进审核；`SCREENING_MODE=off` 时不生效。后台一级「初筛」页的「入口关键词规则」：
