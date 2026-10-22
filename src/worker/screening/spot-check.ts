@@ -16,7 +16,7 @@ const PERK_WORDS = /免费|额度|赠送|白送|送\s*\$?\d|积分|会员|试用
 const SPOT_CHECK_MAX = 15; // admin requests share the identity query budget in enforce mode (2 writes per item)
 
 type Row = { status: string; offer_id: string | null; id: number; origin: string; url: string; title: string | null; resolution: string | null; created_at: string };
-export type AutoClosed = { id: number; origin: string; url: string; title: string; reason: string; closedBy: 'rule' | 'model'; ruleId: string | null; category: ReasonCategory; likely: boolean; closedAt: string | null; expectedVersion: string; recoveryPending: boolean };
+export type AutoClosed = { id: number; origin: string; url: string; title: string; reason: string; closedBy: 'rule' | 'model' | 'gate0_link'; ruleId: string | null; category: ReasonCategory; likely: boolean; closedAt: string | null; expectedVersion: string; recoveryPending: boolean };
 
 export function guessCategory(reason: string): ReasonCategory {
   if (/重复|已收录|已有条目|已关联|已上架/.test(reason)) return 'duplicate';
@@ -33,7 +33,7 @@ export function guessCategory(reason: string): ReasonCategory {
 export async function listAutoClosed(db: D1Database, days = 7): Promise<{ items: AutoClosed[]; total: number; likely: number }> {
   const since = new Date(Date.now() - days * 86400_000).toISOString();
   const rows = await db.prepare(`SELECT l.id, l.status, l.offer_id, l.origin, l.url, l.title, l.resolution, l.created_at FROM leads l
-    WHERE l.title IS NOT NULL AND ((json_extract(l.resolution,'$.spotCheck.verdict')='wrong' AND (l.status='rejected' OR COALESCE(json_extract(l.resolution,'$.spotCheck.recovery.state'),'')<>'completed')) OR (l.status='rejected' AND l.created_at>=? AND COALESCE(json_extract(l.resolution,'$.spotCheck.verdict'),'')=''
+    WHERE l.title IS NOT NULL AND ((json_extract(l.resolution,'$.spotCheck.verdict')='wrong' AND (l.status='rejected' OR COALESCE(json_extract(l.resolution,'$.spotCheck.recovery.state'),'')<>'completed')) OR (((l.status='linked' AND json_extract(l.resolution,'$.gate0')=1) OR l.status='rejected') AND l.created_at>=? AND COALESCE(json_extract(l.resolution,'$.spotCheck.verdict'),'')=''
       AND NOT EXISTS(SELECT 1 FROM decision_labels d WHERE d.subject_kind='lead' AND d.subject_id=CAST(l.id AS TEXT) AND d.actor_kind='owner')))
     ORDER BY CASE WHEN json_extract(l.resolution,'$.spotCheck.verdict')='wrong' THEN 0 ELSE 1 END,l.id DESC LIMIT 800`).bind(since).all<Row>();
   const rules = new Map((await db.prepare(`SELECT id, category FROM screening_rules`).all<{ id: string; category: ReasonCategory }>()).results.map(r => [r.id, r.category]));
@@ -41,7 +41,7 @@ export async function listAutoClosed(db: D1Database, days = 7): Promise<{ items:
   const items = await Promise.all(rows.results.map(async row => {
     const resolution = row.resolution ? JSON.parse(row.resolution) as { reason?: string; ruleId?: string; checkedAt?: string } : {};
     const title = row.title ?? '', reason = resolution.reason ?? '', ruleId = resolution.ruleId ?? null;
-    return { id: row.id, origin: row.origin, url: row.url, title, reason, closedBy: ruleId ? 'rule' as const : 'model' as const, ruleId, category: (ruleId && rules.get(ruleId)) || guessCategory(reason),
+    return { id: row.id, origin: row.origin, url: row.url, title, reason, closedBy: row.status === 'linked' ? 'gate0_link' as const : ruleId ? 'rule' as const : 'model' as const, ruleId, category: (ruleId && rules.get(ruleId)) || guessCategory(reason),
       likely: PERK_WORDS.test(title) || platforms.some(p => platformMentioned(title, p)), closedAt: resolution.checkedAt ?? row.created_at, expectedVersion: await leadVersion(row), recoveryPending: JSON.parse(row.resolution || '{}').spotCheck?.verdict === 'wrong' };
   }));
   items.sort((a, b) => Number(b.likely) - Number(a.likely) || b.id - a.id);
@@ -119,7 +119,10 @@ export async function markWronglyClosed(db: D1Database, id: number, actor: strin
   if (recovery.state === 'completed' && row.status !== 'rejected') return { ok: true, ruleRetired, expectedVersion: await leadVersion(row), recovery, more: false };
   // Already-linked and approved canonical records retain their publication and linkage.
   const approved = await db.prepare(`SELECT o.id FROM offers o WHERE o.review_state='approved' AND (o.id=? OR EXISTS(SELECT 1 FROM lead_candidate_links l JOIN intake_candidates c ON c.id=l.candidate_id JOIN benefit_entities e ON e.id=c.entity_id WHERE l.lead_id=? AND e.canonical_offer_id=o.id AND e.current_approved_version_id IS NOT NULL)) LIMIT 1`).bind(row.offer_id, id).first<{ id: string }>();
-  const preserveLinked = row.status === 'linked' || !!approved;
+  // 2026-10-21: a link made by gate0 (system, not a person) is exactly what the owner may be correcting — a genuine new
+  // perk taken for a duplicate. Undo it and return the lead to the queue; human/approved links are still preserved.
+  const systemLink = row.status === 'linked' && resolution.gate0 === true;
+  const preserveLinked = !systemLink && (row.status === 'linked' || !!approved);
   const refusal = preserveLinked ? null : await db.prepare(`SELECT d.id, (SELECT extraction_version FROM intake_candidates WHERE id=d.candidate_id) extraction_version, coalesce((SELECT business_revision FROM benefit_entities WHERE id=d.entity_id),
     (SELECT revision FROM intake_candidates WHERE id=d.candidate_id),
     (SELECT c.revision FROM review_tasks t JOIN task_candidates tc ON tc.task_id=t.id JOIN intake_candidates c ON c.id=tc.candidate_id WHERE t.decision_id=d.id ORDER BY c.id LIMIT 1)) revision ${refusalFrom} ORDER BY d.id LIMIT 1`).bind(id).first<{ id: string; revision: number; extraction_version: string|null }>();
@@ -144,7 +147,7 @@ export async function markWronglyClosed(db: D1Database, id: number, actor: strin
   const next = JSON.stringify({ ...resolution, ...(!more && !preserveLinked ? { status: reanalyze?'retry':'manual', jobId: `spot-recovery-${recovery.operationId}`, attempts: 0, inconclusive: 0, checkedAt: new Date().toISOString(), nextAttemptAt: reanalyze?new Date().toISOString():null, queries: resolution.queries ?? [], candidates: resolution.candidates ?? [], identityTaskIds: recovery.taskIds, reason: reanalyze?'管理员确认误关，重新读取正文并研判官方权益':'管理员抽查确认误关，恢复待审' } : {}), spotCheck: { ...resolution.spotCheck, recovery } });
   const guard = sameLead(row);
   const noRefusal = !more && !preserveLinked ? ` AND NOT EXISTS(SELECT 1 ${refusalFrom})` : '';
-  const saved = await db.prepare(`UPDATE leads SET status=?,offer_id=?,resolution=? WHERE ${guard.sql}${noRefusal} RETURNING id`).bind(nextStatus, approved?.id ?? row.offer_id, next, ...guard.args, ...(!more && !preserveLinked ? [id] : [])).first();
+  const saved = await db.prepare(`UPDATE leads SET status=?,offer_id=?,resolution=? WHERE ${guard.sql}${noRefusal} RETURNING id`).bind(nextStatus, (systemLink ? null : approved?.id ?? row.offer_id), next, ...guard.args, ...(!more && !preserveLinked ? [id] : [])).first();
   if (!saved) throw new IdentityError(409, '抽查记录已更新，请刷新后继续恢复');
-  return { ok: true, ruleRetired, expectedVersion: await leadVersion({ ...row, status: nextStatus, offer_id: approved?.id ?? row.offer_id, resolution: next }), recovery, more };
+  return { ok: true, ruleRetired, expectedVersion: await leadVersion({ ...row, status: nextStatus, offer_id: (systemLink ? null : approved?.id ?? row.offer_id), resolution: next }), recovery, more };
 }

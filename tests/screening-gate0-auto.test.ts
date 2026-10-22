@@ -36,3 +36,26 @@ it('never touches reset or recurring perks, and does nothing unless the switch i
   expect((await post(9705, 'duplicate_rejected', 'lead:9600', 'shadow')).body.applied).toBe(false);
   expect(f.sqlite.prepare("SELECT count(*) n FROM leads WHERE id IN (9703,9704,9705) AND status='new'").get()).toEqual({ n: 3 });
 });
+
+it('a lead whose amounts conflict with the listed perk is not auto-linked as a duplicate', async () => {
+  matched(); lead(9706, 'Vendor 注册送 50 美元（新活动）');
+  offer('vendor-signup-10b', 'Vendor 注册送 10 美元');
+  expect((await post(9706, 'duplicate_published', 'offer:vendor-signup-10b')).body.applied).toBe(false);
+  expect(f.sqlite.prepare('SELECT status FROM leads WHERE id=9706').get()).toEqual({ status: 'new' });
+});
+
+// 2026-10-21: the owner can undo a system "duplicate" link from the spot-check list and get the lead back in the queue.
+it('an auto-linked duplicate appears in the spot-check list and can be returned to the queue', async () => {
+  matched(); lead(9707, 'Vendor 注册送 10 美元'); offer('vendor-signup-10c', 'Vendor 注册送 10 美元');
+  expect((await post(9707, 'duplicate_published', 'offer:vendor-signup-10c')).body.applied).toBe(true);
+  const adminCall = async (path: string, body?: unknown) => { const r = await worker.fetch(new Request('https://local.test/api/admin/' + path, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: 'Bearer gate0-admin-token-001', 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }), { DB: f.db, ADMIN_TOKEN: 'gate0-admin-token-001', IDENTITY_MODE: 'enforce' } as any, {} as any); return { status: r.status, body: await r.json() as any }; };
+  const list = await adminCall('screening/spot-check');
+  const item = list.body.items.find((i: any) => i.id === 9707);
+  expect(item).toMatchObject({ closedBy: 'gate0_link' });
+  const back = await adminCall('screening/spot-check/9707/wrong', { expectedVersion: item.expectedVersion });
+  expect(back.status, JSON.stringify(back.body)).toBe(200);
+  const row = f.sqlite.prepare('SELECT status, offer_id, resolution FROM leads WHERE id=9707').get() as any;
+  expect(row.status).toBe('reviewing');
+  expect(row.offer_id).toBeNull();
+  expect(JSON.parse(row.resolution).spotCheck.verdict).toBe('wrong');
+});
