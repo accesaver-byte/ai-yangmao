@@ -153,3 +153,62 @@ it('keeps a farewell tomorrow separate from the actual reset execution date',asy
 it('does not interpret go as a membership after a for-everyone phrase',async()=>{
  const a=await prepareAiHotReset(env(),await input(text.replace('Day 13/ Le limit reset','Global reset for everyone, go have fun!')));expect((await finish(a.candidateId!)).outcome).toBe('published');expect(f.sqlite.prepare('SELECT membership_requirement FROM offers').get()?.membership_requirement).toBeNull();
 });
+
+// 2026-10-22: AIHOT's structured event and Chinese note decide; the fetched post only binds author, ID and time.
+import {readFileSync} from 'node:fs';
+import {aiHotEventSchema} from '../src/shared/aihot-reset';
+const events=JSON.parse(readFileSync(new URL('./fixtures/aihot-reset-events.json',import.meta.url),'utf8'));
+const day17Url='https://x.com/thsottiaux/status/2113162277688070445';
+const day17Body='Day 17/ Bet you thought we forgot, but no, it’s reset day today.\n\nAlso good time to remind you to get Daybreak Blue access, it only takes 15 mins and you don’t want to have to do it in the middle of an incident.';
+const day17=async(event:unknown=events.day17)=>({...await input('@thsottiaux\n2026-10-22T06:55:22.000Z\n'+day17Body,day17Url),aihotEvent:aiHotEventSchema.parse(event)});
+const changed=(edit:(e:any)=>void)=>{const e=structuredClone(events.day17);edit(e);return e;};
+it('Day 17: a figurative denial no longer blocks AIHOT\'s confirmed reading, dated by its schedule',async()=>{
+ const p=await day17();expect(()=>buildAiHotReset({...p,aihotEvent:undefined})).toThrow('非确定单次重置');
+ f.sqlite.prepare('UPDATE leads SET url=? WHERE id=1').run(day17Url);
+ const result=await prepareAiHotReset(env(),p),done=await finish(result.candidateId!);
+ expect(done.outcome).toBe('published');
+ expect(f.sqlite.prepare('SELECT title,claim_start,claim_end,published_at FROM offers').get()).toEqual({title:'Tibo Day 17 Codex 使用额度重置',claim_start:'2026-10-22',claim_end:'2026-10-22',published_at:'2026-10-22T06:55:22.000Z'});
+ expect(String(f.sqlite.prepare("SELECT reason_text FROM review_decisions WHERE action='approve'").get()!.reason_text)).toContain('AIHOT 事件类型、状态、时间与中文备注');
+ expect(f.sqlite.prepare('SELECT status,offer_id FROM leads WHERE id=1').get()).toEqual({status:'linked',offer_id:done.offerId});
+});
+it('dates confirmed AIHOT events by their confirmation, matching the approved Day 13 and Day 15 resets',async()=>{
+ expect(buildAiHotReset({...await input(),aihotEvent:aiHotEventSchema.parse(events.day13)}).claimStart).toBe('2026-10-17');
+ const link='https://x.com/thsottiaux/status/2112432076767289678';
+ expect(buildAiHotReset({...await input("@thsottiaux\n2026-10-20T06:33:48.000Z\nDay 15/ Nevermind, we're still cooking... and reset. Enjoy.",link),aihotEvent:aiHotEventSchema.parse(events.day15)})).toMatchObject({claimStart:'2026-10-19',title:'Tibo Day 15 Codex 使用额度重置'});
+});
+it.each([
+ ['an unknown type',(e:any)=>{e.type='plan_change';}],
+ ['a status other than announced or confirmed',(e:any)=>{e.status='cancelled';}],
+ ['a cancellation in the Chinese note',(e:any)=>{e.posts[0].fullText='重置取消了。';}],
+ ['an uncertain Chinese note',(e:any)=>{e.posts[0].fullText='明天可能会重置。';}],
+ ['a negated reset',(e:any)=>{e.title='Tibo';e.posts[1].fullText='今天不会重置。';e.posts[0].context[0].text='';}],
+ ['a recurring schedule',(e:any)=>{e.posts[0].fullText='接下来每天都会重置。';}],
+ ['a past reset',(e:any)=>{e.posts[0].fullText='昨天的重置已经落地。';}],
+ ['a note without any reset',(e:any)=>{e.title='Tibo 发帖';for(const p of e.posts){p.fullText='好好享受。';p.text='好好享受。';for(const c of p.context??[])c.text='';}}],
+ ['a post by an unregistered author',(e:any)=>{e.posts[0].url='https://x.com/someone/status/2113162413008884099';}],
+ ['an event that does not contain this post',(e:any)=>{e.posts=e.posts.filter((p:any)=>p.id!=='2113162277688070445');e.posts[0].context=[];}],
+ ['AIHOT original text that differs from the fetched post',(e:any)=>{e.posts[1].fullOriginalText='Day 17/ No reset this week.';}],
+])('keeps %s in review',async(_label,edit)=>{
+ f.sqlite.prepare('UPDATE leads SET url=? WHERE id=1').run(day17Url);
+ await expect(prepareAiHotReset(env(),await day17(changed(edit)))).rejects.toThrow(/保留常规审核|需核对/);
+ expect(f.sqlite.prepare('SELECT count(*) n FROM intake_candidates').get()).toEqual({n:0});
+});
+it('keeps a staff reply to another user about later resets in review',async()=>{
+ const link='https://x.com/thsottiaux/status/2103963215885701493',p=await input('@thsottiaux\n2026-09-26T21:41:35.000Z\n@giadotai Sorry Gia. More resets coming next week',link);
+ expect(()=>buildAiHotReset({...p,aihotEvent:aiHotEventSchema.parse(events.replyNextWeek)})).toThrow('员工回复他人');
+});
+it('re-checks the stored AIHOT event when a saved candidate resumes',async()=>{
+ f.sqlite.prepare('UPDATE leads SET url=? WHERE id=1').run(day17Url);
+ const a=await prepareAiHotReset(env(),await day17());
+ const raw=JSON.parse(String(f.sqlite.prepare('SELECT raw_candidate_json FROM intake_candidates WHERE id=?').get(a.candidateId!)!.raw_candidate_json));
+ expect(raw.candidate._aihotEvent.status).toBe('announced');
+ raw.candidate._aihotEvent.status='cancelled';f.sqlite.prepare('UPDATE intake_candidates SET raw_candidate_json=? WHERE id=?').run(JSON.stringify(raw),a.candidateId!);
+ await expect(advanceAiHotReset(env(),a.candidateId!)).rejects.toThrow('保留常规审核');
+ expect(f.sqlite.prepare("SELECT count(*) n FROM offers WHERE review_state='approved'").get()).toEqual({n:0});
+});
+it('an incidental "only" is not an eligibility limit, but an audience "only" still is',async()=>{
+ f.sqlite.prepare('UPDATE leads SET url=? WHERE id=1').run(day17Url);
+ expect((await prepareAiHotReset(env(),await day17())).outcome).toBe('received');
+ f.sqlite.prepare("INSERT INTO leads(id,origin,url,status) VALUES(2,'aihot',?,'new')").run(url);
+ const narrowed=await input(text+'\nGlobal reset, only for accounts on the team.');expect((await prepareAiHotReset(env(),narrowed)).outcome).toBe('manual');
+});

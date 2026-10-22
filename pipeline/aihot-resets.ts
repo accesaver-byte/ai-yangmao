@@ -1,11 +1,10 @@
 import {api,fetchPage} from './lib';
 import {fetchedSource} from './fetch-evidence';
-import type {Source} from './collectors';
-import type {LeadIn} from '../src/shared/ingest';
-import {AIHOT_RESET_SOURCE,AIHOT_RESET_URL,buildAiHotReset,AiHotResetReviewRequired,type AiHotResetInput} from '../src/shared/aihot-reset';
+import type {AiHotLead,Source} from './collectors';
+import {AIHOT_RESET_SOURCE,AIHOT_RESET_URL,aiHotEventSchema,buildAiHotReset,AiHotResetReviewRequired,type AiHotResetInput} from '../src/shared/aihot-reset';
 interface ResetReceipt {outcome:string;candidateId?:string;offerId?:string;reason?:string}
 /** Run immediately after discoveries persist; independent of model budgets and ordinary lead queue size. */
-export async function publishAiHotResets(source:Source,leads:LeadIn[],options:{dry:boolean;log:(...args:unknown[])=>void;canContinue?:()=>boolean;resume?:boolean}){
+export async function publishAiHotResets(source:Source,leads:AiHotLead[],options:{dry:boolean;log:(...args:unknown[])=>void;canContinue?:()=>boolean;resume?:boolean}){
  const stats={published:0,manual:0,failed:0,manualReasons:[] as {subject:string;reason:string}[],errors:[] as string[]};
  if(source.id!==AIHOT_RESET_SOURCE||source.kind!=='aihot'||source.url!==AIHOT_RESET_URL||!source.autoPublish)return stats;
  if(options.dry){options.log('AIHOT Codex reset 自动发布演练：不写入',leads.length);return stats;}
@@ -29,12 +28,19 @@ export async function publishAiHotResets(source:Source,leads:LeadIn[],options:{d
    try{await finish({outcome:'resume',candidateId:candidate.candidateId});}catch(error){stats.failed++;stats.errors.push(`${candidate.candidateId}: ${(error as Error).message}`);}
   }
  }catch(error){stats.failed++;stats.errors.push('重置续传队列：'+(error as Error).message);}
+ // One post anchoring several AIHOT events is a multi-round schedule; the round cannot be told from the post.
+ const events=new Map<string,number>();for(const lead of leads)events.set(lead.url,(events.get(lead.url)??0)+1);
+ const seen=new Set<string>();
  for(const lead of leads){
   if(options.canContinue&&!options.canContinue()){stats.failed++;stats.errors.push('运行窗口已结束，重置线索保留待续传');break;}
+  if(seen.has(lead.url))continue;seen.add(lead.url);
+  if(events.get(lead.url)!>1){manual(lead.url,'AIHOT 同一原帖对应多次重置，保留常规审核');continue;}
   try{
    const page=await fetchPage(lead.url),proof=fetchedSource(page);
    if(!proof.sourceText||!proof.sourceFetch)throw Error('员工原帖未读到完整正文');
-   const input={url:lead.url,sourceText:proof.sourceText,sourceFetch:proof.sourceFetch,capturedAt:new Date().toISOString()};
+   const event=lead.aihotEvent===undefined?null:aiHotEventSchema.safeParse(lead.aihotEvent);
+   if(event&&!event.success)options.log('AIHOT 重置事件格式无法识别，改读员工原帖',lead.url);
+   const input:AiHotResetInput={url:lead.url,sourceText:proof.sourceText,sourceFetch:proof.sourceFetch,capturedAt:new Date().toISOString(),...(event?.success?{aihotEvent:event.data}:{})};
    try{buildAiHotReset(input);}catch(error){
     if(!(error instanceof AiHotResetReviewRequired))throw error;
     manual(lead.url,error.message);continue;

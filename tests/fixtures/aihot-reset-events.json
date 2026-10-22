@@ -1,0 +1,229 @@
+{
+ "day17": {
+  "id": "reset-2113162277688070445-1-1",
+  "type": "direct_reset",
+  "label": "全员重置",
+  "displayLabel": "重置（形式未明确）",
+  "presentation": {
+   "status": "expired_unconfirmed",
+   "scopeKnown": false,
+   "scopeLabel": null,
+   "kindExplicit": false,
+   "timeInferred": false,
+   "audienceZh": null,
+   "productsZh": null
+  },
+  "estimate": {
+   "from": "2026-10-22T14:55:54.000+08:00",
+   "through": "2026-10-23T02:00:00.000+08:00",
+   "basis": "source",
+   "label": "北京时间 10月22日 14:55–10月23日 02:00",
+   "reason": "按原帖给出的截止时间换算成北京时间，并预留一点延迟。"
+  },
+  "status": "announced",
+  "title": "Tibo 预告将重置额度",
+  "scope": "",
+  "createdAt": "2026-10-22T14:55:22.000+08:00",
+  "updatedAt": "2026-10-22T14:55:54.000+08:00",
+  "confirmedAt": null,
+  "occurredOn": null,
+  "confirmationBasis": null,
+  "schedule": {
+   "precision": "deadline",
+   "from": "2026-10-23T01:00:00.000+08:00",
+   "through": "2026-10-23T01:00:00.000+08:00",
+   "label": "北京时间预计 10月23日 01:00 前"
+  },
+  "posts": [
+   {
+    "id": "2113162413008884099",
+    "publishedAt": "2026-10-22T14:55:54.000+08:00",
+    "stage": "补充说明",
+    "text": "明天太平洋时间上午10点前落地。",
+    "originalText": "Lands tomorrow before 10am PST.",
+    "fullText": "明天太平洋时间上午10点前落地。",
+    "fullOriginalText": "Lands tomorrow before 10am PST.",
+    "context": [
+     {
+      "id": "2113162277688070445",
+      "author": "thsottiaux",
+      "relation": "reply",
+      "text": "第17天/你肯定以为我们忘了，但没有，今天就是重置日。\n\n顺便提醒你去获取 Daybreak Blue 访问权限，只需15分钟，你不会想在事故处理到一半时才去做这件事。",
+      "originalText": "Day 17/ Bet you thought we forgot, but no, it’s reset day today.\n\nAlso good time to remind you to get Daybreak Blue access, it only takes 15 mins and you don’t want to have to do it in the middle of an incident.",
+      "url": "https://x.com/i/status/2113162277688070445"
+     }
+    ],
+    "url": "https://x.com/thsottiaux/status/2113162413008884099"
+   },
+   {
+    "id": "2113162277688070445",
+    "publishedAt": "2026-10-22T14:55:22.000+08:00",
+    "stage": "预告",
+    "text": "你肯定以为我们忘了，但没有，今天就是重置日。",
+    "originalText": "Bet you thought we forgot, but no, it’s reset day today.",
+    "fullText": "第17天/你肯定以为我们忘了，但没有，今天就是重置日。\n\n顺便提醒一下，去获取 Daybreak Blue 访问权限，只需 15 分钟，你不会想在事故处理中途才去做这件事。",
+    "fullOriginalText": "Day 17/ Bet you thought we forgot, but no, it’s reset day today.\n\nAlso good time to remind you to get Daybreak Blue access, it only takes 15 mins and you don’t want to have to do it in the middle of an incident.",
+    "context": [],
+    "url": "https://x.com/thsottiaux/status/2113162277688070445"
+   }
+  ],
+  "url": "https://aihot.news/codex-reset"
+ },
+ "day15": {
+  "id": "reset-2112432076767289678-1-1",
+  "type": "direct_reset",
+  "label": "全员重置",
+  "displayLabel": "重置（形式未明确）",
+  "presentation": {
+   "status": "confirmed",
+   "scopeKnown": false,
+   "scopeLabel": null,
+   "kindExplicit": false,
+   "timeInferred": false,
+   "audienceZh": null,
+   "productsZh": null
+  },
+  "estimate": null,
+  "status": "confirmed",
+  "title": "Tibo 确认重置",
+  "scope": "",
+  "createdAt": "2026-10-20T14:33:48.000+08:00",
+  "updatedAt": "2026-10-20T14:33:48.000+08:00",
+  "confirmedAt": "2026-10-20T14:33:48.000+08:00",
+  "occurredOn": null,
+  "confirmationBasis": "source_post",
+  "schedule": null,
+  "posts": [
+   {
+    "id": "2112432076767289678",
+    "publishedAt": "2026-10-20T14:33:48.000+08:00",
+    "stage": "确认完成",
+    "text": "算了，我们还在忙……然后重置了。好好享受吧。",
+    "originalText": "Nevermind, we're still cooking... and reset. Enjoy.",
+    "fullText": "第15天/ 算了，我们还在忙……然后重置了。好好享受吧。",
+    "fullOriginalText": "Day 15/ Nevermind, we're still cooking... and reset. Enjoy.",
+    "context": [
+     {
+      "id": "2112268918681485431",
+      "author": "thsottiaux",
+      "relation": "quote",
+      "text": "第15天/ 我们完蛋了",
+      "originalText": "Day 15/ We're cooked",
+      "url": "https://x.com/i/status/2112268918681485431"
+     }
+    ],
+    "url": "https://x.com/thsottiaux/status/2112432076767289678"
+   }
+  ],
+  "url": "https://aihot.news/codex-reset"
+ },
+ "day13": {
+  "id": "reset-2111492738025959922-1-1",
+  "type": "direct_reset",
+  "label": "全员重置",
+  "displayLabel": "重置（形式未明确）",
+  "presentation": {
+   "status": "confirmed",
+   "scopeKnown": false,
+   "scopeLabel": null,
+   "kindExplicit": false,
+   "timeInferred": false,
+   "audienceZh": null,
+   "productsZh": null
+  },
+  "estimate": null,
+  "status": "confirmed",
+  "title": "Tibo 确认重置",
+  "scope": "",
+  "createdAt": "2026-10-18T00:21:13.000+08:00",
+  "updatedAt": "2026-10-18T05:33:29.557+08:00",
+  "confirmedAt": "2026-10-18T05:12:21.000+08:00",
+  "occurredOn": null,
+  "confirmationBasis": "source_post",
+  "schedule": {
+   "precision": "deadline",
+   "from": "2026-10-18T15:00:00.000+08:00",
+   "through": "2026-10-18T15:00:00.000+08:00",
+   "label": "北京时间预计 10月18日 15:00 前"
+  },
+  "posts": [
+   {
+    "id": "2111492738025959922",
+    "publishedAt": "2026-10-18T00:21:13.000+08:00",
+    "stage": "预告",
+    "text": "今天之内、太平洋时间当天结束前落地",
+    "originalText": "Landing sometime today by EOD PST",
+    "fullText": "今天之内、太平洋时间当天结束前落地",
+    "fullOriginalText": "Landing sometime today by EOD PST",
+    "context": [
+     {
+      "id": "2111492673890824348",
+      "author": "thsottiaux",
+      "relation": "reply",
+      "text": "第13天/ 额度重置",
+      "originalText": "Day 13/ Le limit reset",
+      "url": "https://x.com/i/status/2111492673890824348"
+     }
+    ],
+    "url": "https://x.com/thsottiaux/status/2111492738025959922"
+   }
+  ],
+  "url": "https://aihot.news/codex-reset"
+ },
+ "replyNextWeek": {
+  "id": "reset-2103963215885701493-1-1",
+  "type": "reset_credit",
+  "label": "发重置卡",
+  "displayLabel": "重置卡发放",
+  "presentation": {
+   "status": "confirmed",
+   "scopeKnown": false,
+   "scopeLabel": null,
+   "kindExplicit": false,
+   "timeInferred": false,
+   "audienceZh": null,
+   "productsZh": null
+  },
+  "estimate": null,
+  "status": "confirmed",
+  "title": "重置卡已发放",
+  "scope": "",
+  "createdAt": "2026-09-27T05:41:35.000+08:00",
+  "updatedAt": "2026-09-30T05:14:28.548+08:00",
+  "confirmedAt": null,
+  "occurredOn": "2026-09-30",
+  "confirmationBasis": "receipt_review",
+  "schedule": null,
+  "posts": [
+   {
+    "id": "2103963215885701493",
+    "publishedAt": "2026-09-27T05:41:35.000+08:00",
+    "stage": "预告",
+    "text": "下周会有更多重置。",
+    "originalText": "More resets coming next week",
+    "fullText": "抱歉，Gia。下周会有更多重置。",
+    "fullOriginalText": "@giadotai Sorry Gia. More resets coming next week",
+    "context": [
+     {
+      "id": "2103919273353830410",
+      "author": "giadotai",
+      "relation": "reply",
+      "text": null,
+      "originalText": "The reset came right after my own reset, couldn’t be worse timing.",
+      "url": "https://x.com/i/status/2103919273353830410"
+     },
+     {
+      "id": "2103911959544610829",
+      "author": "thsottiaux",
+      "relation": "quote",
+      "text": "重置已全部生效。就这些了。祝大家周末愉快。",
+      "originalText": "Resets all propagated. That will be all. Have a fantastic weekend.",
+      "url": "https://x.com/i/status/2103911959544610829"
+     }
+    ],
+    "url": "https://x.com/thsottiaux/status/2103963215885701493"
+   }
+  ],
+  "url": "https://aihot.news/codex-reset"
+ }
+}

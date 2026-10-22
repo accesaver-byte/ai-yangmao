@@ -1,5 +1,5 @@
 import {Hono} from 'hono';
-import {aiHotResetInput,buildAiHotReset,AIHOT_RESET_SOURCE,AIHOT_RESET_URL,AIHOT_RESET_ACTOR,type AiHotResetInput} from '../shared/aihot-reset';
+import {aiHotEventSchema,aiHotResetInput,buildAiHotReset,AIHOT_RESET_SOURCE,AIHOT_RESET_URL,AIHOT_RESET_ACTOR,type AiHotResetInput} from '../shared/aihot-reset';
 import {officialStatusKey} from '../shared/dedupe';
 import {withMembershipFacts} from '../shared/identity/membership';
 import {formatMembership,type MembershipRequirement} from '../shared/membership';
@@ -46,7 +46,9 @@ export async function prepareAiHotReset(env:Env,raw:AiHotResetInput):Promise<Res
  const paid=/\bpaid\s+(?:accounts|users|subscribers|subscriptions)\b/i.test(input.sourceText);
  const planClauses=input.sourceText.split(/[.!?;\n]/).filter(clause=>/\b(?:subscribers?|users?|accounts?|members?|plans?|only|for|ChatGPT)\b/i.test(clause)).join('\n');
  const named=[...planClauses.matchAll(/\b(?:ChatGPT\s+)?(Plus|Pro(?:\s?(?:100|200|500))?|Go|Business(?:\s+Premium)?|Enterprise|Edu)\b/gi)].filter(m=>m[1].toLowerCase()!=='go'||/^ChatGPT\s+Go/i.test(m[0])||/^\s+(?:users?|subscribers?|accounts?|members?|plans?)\b/i.test(planClauses.slice(m.index!+m[0].length))||/\b(?:for|only|on)\s*$/i.test(planClauses.slice(Math.max(0,m.index!-20),m.index))).map(m=>m[1].replaceAll(' ','').toLowerCase());
- if(/(?:selected|some|certain|eligible)\s+(?:accounts|users|subscribers)|(?:accounts|users|reset).{0,35}(?:except|excluding)/i.test(input.sourceText)||/\bonly\b/i.test(input.sourceText)&&!paid&&!named.length)return {outcome:'manual',reason:'原帖含尚未结构化的资格限制'};
+ // "Only" restricts eligibility when its clause names who is eligible; "it only takes 15 mins" (Day 17) does not.
+ const onlyAudience=/\bonly\b[^.!?;\n]*\b(?:users?|subscribers?|accounts?|members?|plans?|tiers?)\b|\b(?:users?|subscribers?|accounts?|members?|plans?|tiers?)\b[^.!?;\n]*\bonly\b/i.test(input.sourceText);
+ if(/(?:selected|some|certain|eligible)\s+(?:accounts|users|subscribers)|(?:accounts|users|reset).{0,35}(?:except|excluding)/i.test(input.sourceText)||onlyAudience&&!paid&&!named.length)return {outcome:'manual',reason:'原帖含尚未结构化的资格限制'};
  if(paid||named.length){
   const catalog=await readMembershipCatalog(env.DB),product=catalog.products.find(p=>p.name==='ChatGPT'&&p.status==='verified');
   if(!product)return {outcome:'manual',reason:'付费账号资格尚无已核实的 ChatGPT 会员目录'};
@@ -66,7 +68,7 @@ export async function prepareAiHotReset(env:Env,raw:AiHotResetInput):Promise<Res
  const quote=offer.evidence.excerpts.benefit!,start=input.sourceText.indexOf(quote);
  if(start<0)throw new IdentityError(400,'原文摘录未绑定');
  offer.leadId=lead.id;
- const receipts=await store.recordCandidates({requestId:request+':candidate',observationId:obs.observationId,sourceFetchId:obs.fetchId,extractionVersion:'aihot-codex-reset-v1',extractionComplete:true,leadIds:[lead.id],candidates:[{inputId:offer.id,span:{start,end:start+quote.length,quote},quotes:[{id:'benefit',start,end:start+quote.length,quote},{id:'publication',start:input.sourceText.indexOf(input.sourceText.split('\n')[1]),end:input.sourceText.indexOf(input.sourceText.split('\n')[1])+input.sourceText.split('\n')[1].length,quote:input.sourceText.split('\n')[1]}],facts:offer.identityFacts!,rawCandidate:offer}]});
+ const receipts=await store.recordCandidates({requestId:request+':candidate',observationId:obs.observationId,sourceFetchId:obs.fetchId,extractionVersion:'aihot-codex-reset-v1',extractionComplete:true,leadIds:[lead.id],candidates:[{inputId:offer.id,span:{start,end:start+quote.length,quote},quotes:[{id:'benefit',start,end:start+quote.length,quote},{id:'publication',start:input.sourceText.indexOf(input.sourceText.split('\n')[1]),end:input.sourceText.indexOf(input.sourceText.split('\n')[1])+input.sourceText.split('\n')[1].length,quote:input.sourceText.split('\n')[1]}],facts:offer.identityFacts!,rawCandidate:{...offer,...(input.aihotEvent?{_aihotEvent:input.aihotEvent}:{})}}]});
  return {outcome:'received',candidateId:receipts[0].candidateId};
 }
 export async function advanceAiHotReset(env:Env,candidateId:string):Promise<Result>{
@@ -75,7 +77,10 @@ export async function advanceAiHotReset(env:Env,candidateId:string):Promise<Resu
  const row=await env.DB.prepare("SELECT c.*,o.text,o.final_url,coalesce(f.provenance_json,o.fetch_provenance_json) provenance FROM intake_candidates c JOIN source_observations o ON o.id=c.observation_id LEFT JOIN source_observation_fetches f ON f.id=c.source_fetch_id WHERE c.id=? AND c.extraction_version='aihot-codex-reset-v1'").bind(candidateId).first<any>();
  if(!row)throw new IdentityError(404,'没有此 AIHOT 重置候选');
  const display=JSON.parse(row.raw_candidate_json).candidate;
- const expected=buildAiHotReset({url:row.final_url,sourceText:row.text,sourceFetch:display.sourceFetch,capturedAt:display.evidence.capturedAt});
+ // The AIHOT event the candidate was admitted with is stored beside it, so resumption re-checks the same reading.
+ const aihotEvent=display._aihotEvent===undefined?undefined:aiHotEventSchema.parse(display._aihotEvent);
+ const expected=buildAiHotReset({url:row.final_url,sourceText:row.text,sourceFetch:display.sourceFetch,capturedAt:display.evidence.capturedAt,aihotEvent});
+ const basis=aihotEvent?'AIHOT 事件类型、状态、时间与中文备注判定为独立重置，员工原帖已绑定作者与时间':'员工原帖判定为独立重置';
  if(display.id!==expected.id||display.sourceId!==AIHOT_RESET_SOURCE||JSON.parse(row.provenance).sourceVerified!==true||JSON.parse(row.provenance).productId!=='openai')throw new IdentityError(409,'候选不属于授权自动上架范围');
  const lead=await env.DB.prepare("SELECT id,status,resolution FROM leads WHERE id=? AND origin='aihot'").bind(display.leadId??0).first<{id:number;status:string;resolution:string|null}>();
  if(!lead||lead.status==='rejected')return manual('原线索已由管理员关闭');
@@ -91,14 +96,14 @@ export async function advanceAiHotReset(env:Env,candidateId:string):Promise<Resu
   if(task.material_revision!==1)return manual('身份卡已有多来源或人工变更');
   const other=await peers(env,expected.evidence.url,expected.claimStart!,offer?.id);
   if(other.ambiguous)return manual('同日已有重置记录，保留身份核对');
-  const receipt=await service.resolveIdentityTask(task.id,{requestId:`aihot-reset-new:${candidateId}:${task.revision}`,expectedRevision:task.revision,action:'new',candidateId,facts:JSON.parse(row.facts_json),reason:'管理员授权 AIHOT Codex reset 自动发布：独立官方重置公告；同日无其他重置，保留既有拒绝与人工决定。',actor:AIHOT_RESET_ACTOR});
+  const receipt=await service.resolveIdentityTask(task.id,{requestId:`aihot-reset-new:${candidateId}:${task.revision}`,expectedRevision:task.revision,action:'new',candidateId,facts:JSON.parse(row.facts_json),reason:`管理员授权 AIHOT Codex reset 自动发布：${basis}；同日无其他重置，保留既有拒绝与人工决定。`,actor:AIHOT_RESET_ACTOR});
   return {outcome:receipt.outcome==='created_pending'?'pending_initial':receipt.outcome,candidateId,offerId:receipt.canonicalOfferId??undefined};
  }
  if(task?.kind==='initial'&&offer&&['open','manual'].includes(task.state)){
   if((await peers(env,expected.evidence.url,expected.claimStart!,offer.id)).ambiguous)return manual('出现同日重置，需核对轮次');
   const edit=await env.DB.prepare("SELECT 1 FROM offer_revisions WHERE offer_id=? AND author='admin' LIMIT 1").bind(offer.id).first();
   if(edit||task.material_revision!==1)return manual('审核草稿已有人工修改');
-  await service.decideTask(task.id,{requestId:`aihot-reset-approve:${candidateId}:${task.revision}`,expectedRevision:task.revision,action:'approve',actor:AIHOT_RESET_ACTOR,role:'admin',reason:'按管理员2026-10-18授权自动上架 AIHOT Codex 独立重置事件；官方原帖已绑定，身份、字段和历史拒绝守卫通过。'},{sql:"EXISTS(SELECT 1 FROM leads WHERE id=? AND status=? AND coalesce(resolution,'')=coalesce(?,'')) AND EXISTS(SELECT 1 FROM sources WHERE id=? AND enabled=1 AND auto_publish=1)",args:[lead.id,lead.status,lead.resolution,AIHOT_RESET_SOURCE]});
+  await service.decideTask(task.id,{requestId:`aihot-reset-approve:${candidateId}:${task.revision}`,expectedRevision:task.revision,action:'approve',actor:AIHOT_RESET_ACTOR,role:'admin',reason:`按管理员2026-10-18授权（2026-10-22 起以 AIHOT 判定）自动上架 AIHOT Codex 独立重置事件；${basis}，身份、字段和历史拒绝守卫通过。`},{sql:"EXISTS(SELECT 1 FROM leads WHERE id=? AND status=? AND coalesce(resolution,'')=coalesce(?,'')) AND EXISTS(SELECT 1 FROM sources WHERE id=? AND enabled=1 AND auto_publish=1)",args:[lead.id,lead.status,lead.resolution,AIHOT_RESET_SOURCE]});
   return {outcome:'approved',candidateId,offerId:offer.id};
  }
  if(task&&['resolved','cancelled'].includes(task.state))return manual('审核已有结案决定');
