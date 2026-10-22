@@ -160,6 +160,10 @@ OpenRouter默认备用为`openrouter/free`；404须检查模型可用性，不�
 
 里程碑 1（2026-10-13 上线）在身份系统之前为每条新线索记录筛选判定与紧急度（P0–P3），**不关闭、不关联、不重排、不发布**（管理员批准的入口过滤规则除外，见下）。开关为 Worker 与 GitHub 变量 `SCREENING_MODE=off|shadow|suggest|auto`（现为 `shadow`）；`SCREENING_MODELS` 为固定的 OpenRouter `:free` 模型（逗号分隔，校准前按顺序兜底）；可选 `SCREENING_PAID_MODEL` 与 `SCREENING_PAID_PRICE_IN/OUT` 仅供 P0 兜底。每次调用经预算台账预留/结算：筛选单独记账（`SCREENING_MONTHLY_CAP_CNY`，默认 72），免费池每日 1000 次（P0/P1 预留 200、非紧急 ≤800、回填 ≤400）。后续阶段与门槛见[实施计划](superpowers/plans/2026-10-12-lead-screening-redesign.md)。
 
+### 里程碑 2：gate0 自动生效（2026-10-21）
+
+Worker 变量 `SCREENING_GATE0_MODE=auto`（与 `SCREENING_MODE` 分开，模型判断仍为 `shadow`）：gate0 的确定性判断直接作用于线索——与管理员已拒绝线索相同的转帖关闭（`resolution.gate0=true`），与已上架活动相同的线索关联。按最终结果核对 142/142（排除自我匹配后）。不处理：标题或活动含每日/每周/每月/重置等周期词的线索与活动、已关联查重卡的线索。回滚：把该变量改成 `shadow`。模型判断计划 2026-10-28 复核，要求关闭精确率 ≥97% 且周期/重置类零误关。
+
 ### 入口过滤规则（2026-10-16）
 
 模型筛选仍是影子模式，但**管理员批准的标题规则例外**：线索写入时（`POST /api/ingest/leads`）按 `screening_rules` 中启用的 `title_pattern` 匹配标题，命中即关闭线索（`status=rejected`，经身份系统留拒绝记录），不再研判、搜索或进审核；`SCREENING_MODE=off` 时不生效。后台一级「初筛」页的「入口关键词规则」：
