@@ -1,5 +1,7 @@
 import {offerIn,type OfferIn} from '../../shared/ingest';
-import { introducesNothingNew, pageContains } from '../../shared/identity/perk-anchors';
+import { foldText, introducesNothingNew, pageContains, textSimilarity } from '../../shared/identity/perk-anchors';
+import {readReviewDecision} from './store';
+import type {ClaimMatch} from './claim-memory';
 import {stableJson,normalizeDocumentUrl} from '../../shared/identity/normalize';
 import {factSlots} from '../../shared/identity/compare';
 import {canonicalTermsSchema,type CanonicalTermsV1} from '../../shared/identity/types';
@@ -62,7 +64,19 @@ return {entityId:row.entity_id,versionId:row.version_id,decisionId:row.decision_
  * days). The quote the owner confirmed from that page then anchors the re-read. Registered official pages a vendor only
  * serves through a reader (Jina, fetch_kind indirect) are accepted for this narrow check.
  */
-export async function findSameSourceReread(db:D1Database,raw:string,facts:CanonicalTermsV1,observationId:string,sourceFetchId:string|null):Promise<ReviewedLegacyMatch|null>{
+type OwnerDecisionRow=Record<string,unknown>&{id:string;action:string;entity_id:string|null;reason_code:string;created_at:string;proof_id:string;proof_revision:number;proof_raw:string};
+/** One read of the owner's "same as" and refusal decisions per resolution, shared by page memory and refusal memory. */
+export interface OwnerDecisionMemo {platformId?:string;rows?:OwnerDecisionRow[]}
+const REFUSAL_DAYS=90;
+const refusalScope=`d.action='reject' AND d.entity_id IS NULL AND d.reason_code<>'insufficient_evidence' AND d.created_at>=? AND json_extract(c.raw_candidate_json,'$.candidate.platformId')=?`;
+async function ownerDecisions(db:D1Database,platformId:string,entityIds:string[],since:string,memo:OwnerDecisionMemo):Promise<OwnerDecisionRow[]>{
+ const rows=(await db.prepare(`SELECT d.*,c.id proof_id,c.revision proof_revision,c.raw_candidate_json proof_raw FROM review_decisions d JOIN intake_candidates c ON c.id=d.candidate_id
+  WHERE d.actor NOT LIKE 'policy:%' AND NOT EXISTS(SELECT 1 FROM review_decisions n WHERE n.supersedes_id=d.id)
+  AND ((d.action='same' AND d.entity_id IN (SELECT value FROM json_each(?))) OR (${refusalScope}))
+  ORDER BY d.created_at DESC LIMIT 600`).bind(JSON.stringify(entityIds),since,platformId).all<OwnerDecisionRow>()).results;
+ memo.platformId=platformId;memo.rows=rows;return rows;
+}
+export async function findSameSourceReread(db:D1Database,raw:string,facts:CanonicalTermsV1,observationId:string,sourceFetchId:string|null,memo:OwnerDecisionMemo={},now=new Date()):Promise<ReviewedLegacyMatch|null>{
  if(hasKnownTerms(facts))return null;
  const parsed=offerIn.safeParse(JSON.parse(raw).candidate);if(!parsed.success)return null;
  const offer=parsed.data,page=normalizeDocumentUrl(offer.evidence.url);
@@ -74,12 +88,13 @@ export async function findSameSourceReread(db:D1Database,raw:string,facts:Canoni
   AND NOT EXISTS(SELECT 1 FROM review_decisions other WHERE other.entity_id=e.id AND other.action='reject' AND (other.version_id=v.id OR json_extract(other.scope_json,'$.kind')='entity_alias') AND NOT EXISTS(SELECT 1 FROM review_decisions n WHERE n.supersedes_id=other.id))
   ORDER BY d.created_at DESC LIMIT 200`).bind(offer.platformId).all<{entity_id:string;business_revision:number;canonical_offer_id:string;updated_at:string;offer_evidence:string;version_id:string;display_candidate_json:string;decision_id:string;site:string|null;x_handles:string;staff_handles:string;wechat:string|null}>()).results;
  if(!rows.length)return null;
- const confirmed=(await db.prepare(`SELECT d.entity_id,json_extract(c.raw_candidate_json,'$.candidate.evidence.url') url,json_extract(c.raw_candidate_json,'$.candidate.evidence.excerpts.benefit') quote
-  FROM review_decisions d JOIN intake_candidates c ON c.id=d.candidate_id
-  WHERE d.action='same' AND d.actor NOT LIKE 'policy:%' AND d.entity_id IN (SELECT value FROM json_each(?)) AND NOT EXISTS(SELECT 1 FROM review_decisions n WHERE n.supersedes_id=d.id)
-  ORDER BY d.created_at DESC LIMIT 400`).bind(JSON.stringify(rows.map(row=>row.entity_id))).all<{entity_id:string;url:string|null;quote:string|null}>()).results;
+ const decided=await ownerDecisions(db,offer.platformId,rows.map(row=>row.entity_id),new Date(now.getTime()-REFUSAL_DAYS*86400_000).toISOString(),memo);
  const confirmedQuotes=new Map<string,string[]>();
- for(const row of confirmed)if(row.url&&row.quote?.trim()&&normalizeDocumentUrl(row.url)===page)confirmedQuotes.set(row.entity_id,[...(confirmedQuotes.get(row.entity_id)??[]),row.quote]);
+ for(const row of decided){
+  if(row.action!=='same'||!row.entity_id)continue;
+  const proof=JSON.parse(row.proof_raw).candidate as {evidence?:{url?:string;excerpts?:{benefit?:string}}}|undefined,url=proof?.evidence?.url,quote=proof?.evidence?.excerpts?.benefit;
+  if(url&&quote?.trim()&&normalizeDocumentUrl(url)===page)confirmedQuotes.set(row.entity_id,[...(confirmedQuotes.get(row.entity_id)??[]),quote]);
+ }
  const onPage=rows.filter(row=>{const url=(JSON.parse(row.offer_evidence) as {url?:string}).url;return !!url&&normalizeDocumentUrl(url)===page||confirmedQuotes.has(row.entity_id);});
  if(!onPage.length)return null;
  const sources=(await db.prepare('SELECT url,tier FROM sources WHERE platform_id=?').bind(offer.platformId).all<{url:string;tier:string}>()).results;
@@ -104,4 +119,35 @@ export async function findSameSourceReread(db:D1Database,raw:string,facts:Canoni
  if(fitting.length!==1)return null;
  const row=fitting[0];
  return {entityId:row.entity_id,versionId:row.version_id,decisionId:row.decision_id,offerId:row.canonical_offer_id,action:'approve',revision:row.business_revision,updatedAt:row.updated_at,display:row.display_candidate_json,relatedRevisions:[{id:row.entity_id,revision:row.business_revision}],reason:'same_source_reread'};
+}
+
+/**
+ * The refusal side of page memory (2026-10-22, admin). Content the owner already rejected from a page came back on
+ * every crawl because a refusal, unlike a "same as X", was not remembered (Vidu /zh/pricing: 7 of 12 cards rejected).
+ * A fresh read closes on that decision when: it is the owner's own refusal, still in force, within 90 days and not an
+ * evidence-gap refusal; the refused passage is still on this page; the new candidate quotes that same passage; and it
+ * states no amount, model or requirement the refused candidate lacked. A real change still reaches the owner.
+ */
+export async function findSameSourceRefusal(db:D1Database,raw:string,facts:CanonicalTermsV1,page:{text:string;truncated:boolean},memo:OwnerDecisionMemo={},now=new Date()):Promise<ClaimMatch|null>{
+ if(hasKnownTerms(facts)||page.truncated||!page.text)return null;
+ const parsed=offerIn.safeParse(JSON.parse(raw).candidate);if(!parsed.success)return null;
+ const offer=parsed.data,quote=offer.evidence.excerpts.benefit;
+ if(!quote?.trim()||offer.tags.includes('reset'))return null;
+ const url=normalizeDocumentUrl(offer.evidence.url),since=new Date(now.getTime()-REFUSAL_DAYS*86400_000).toISOString();
+ // Page memory has usually read these already in this resolution; otherwise read the refusals alone.
+ const rows=memo.platformId===offer.platformId&&memo.rows?memo.rows.filter(row=>row.action==='reject'&&!row.entity_id&&row.reason_code!=='insufficient_evidence'&&row.created_at>=since)
+  :(await db.prepare(`SELECT d.*,c.id proof_id,c.revision proof_revision,c.raw_candidate_json proof_raw FROM review_decisions d JOIN intake_candidates c ON c.id=d.candidate_id
+   WHERE d.actor NOT LIKE 'policy:%' AND NOT EXISTS(SELECT 1 FROM review_decisions n WHERE n.supersedes_id=d.id) AND ${refusalScope} ORDER BY d.created_at DESC LIMIT 200`).bind(since,offer.platformId).all<OwnerDecisionRow>()).results;
+ const refused=rows.filter(row=>{const proofUrl=(JSON.parse(row.proof_raw).candidate?.evidence?.url) as string|undefined;return !!proofUrl&&normalizeDocumentUrl(proofUrl)===url;});
+ for(const row of refused){
+  const proof=offerIn.safeParse(JSON.parse(row.proof_raw).candidate);if(!proof.success)continue;
+  const refusedQuote=proof.data.evidence.excerpts.benefit;
+  if(!refusedQuote?.trim()||!pageContains(page.text,refusedQuote))continue;
+  const a=foldText(quote),b=foldText(refusedQuote);
+  if(!(a.includes(b)||b.includes(a)||textSimilarity(quote,refusedQuote)>=0.8))continue;
+  const p=proof.data,texts=[p.title,p.valueText,p.creditValidity,...(p.steps??[]),...Object.values(p.evidence.excerpts)].filter((x):x is string=>!!x);
+  if(!introducesNothingNew(offer,{texts,models:p.models,requirements:p.requirements}))continue;
+  return {decision:readReviewDecision(row),canonicalCandidateId:row.proof_id,proofCandidateId:row.proof_id,proofRevision:row.proof_revision,reopen:{allowed:false,reasonCodes:[],basisHash:null},basis:{reason:'same_page_refusal',page:url,appliedAt:now.toISOString()}};
+ }
+ return null;
 }

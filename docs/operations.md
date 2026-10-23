@@ -175,6 +175,12 @@ Worker 变量 `SCREENING_GATE0_MODE=auto`（与 `SCREENING_MODE` 分开，模型
 - **存量卡**：上线前已有模型判定的卡不会再筛选。`POST /api/admin/screening/model-duplicates/apply` 默认演练，只报告“would close / keep: 原因”；`{"dryRun":false}` 才结案，每请求 2 张，按 `nextCursor` 续传。
 - 卡片级模型筛选只在官方页面抽取路径运行（`pipeline/run.ts` 的 `screenCandidateReceipts`）；线索经旧适配器（`legacy-adapter-v1`）产生的查重卡没有卡片级判定，模型结案暂不覆盖，线索级判定只在抽查与校准中使用。
 
+### 拒绝记忆与噪声信源（2026-10-22）
+
+页面记忆只记住“与 X 相同”，管理员的拒绝不被记住，同一页面的同一段内容每轮重抓都回到查重（10-12 起在已有拒绝的页面上又拒了 117 次）。现由 `findSameSourceRefusal`（`src/worker/identity/reviewed-legacy.ts`）补上：管理员本人（非 `policy:` 署名）90 天内、仍有效且不是证据不足的拒绝；被拒原文仍在同一页面上；新候选引用同一段原文（折叠后包含或文本相似度 ≥0.8）；且没有被拒候选缺少的金额、模型或门槛。满足时沿用该拒绝结案（`identity_refusal_applications`，`identity_basis_json.reason=same_page_refusal`，原因码同名），重置标签不处理。与页面记忆共用一次管理员决定读取，单请求查询数不变。按 10-12 起数据回放，117 次中 61 次会自动结案。
+
+「自动关闭抽查 → 🧠 沿用你的拒绝自动结案」按被沿用的拒绝列出最近 7 天的结案次数；「↩ 不该沿用，恢复审核」对原拒绝执行 `reopenDecision`，内容回到查重队列，此后不再沿用。初筛页「噪声信源」列出 30 天内被重读至少 5 次却没有新上架福利的信源，可写明理由停用。接口（仅管理员）：`GET /api/admin/screening/spot-check/refusals`、`POST .../refusals/:id/undo`、`GET /api/admin/screening/noisy-sources`、`POST /api/admin/sources/:id/enabled`（`{on,reason}`，记录在 `config.enabledChange`）。
+
 ### 只收现行权益（2026-10-22）
 
 管理员决定自动采集只收现行、即将开始或本月内结束的权益，取代 2026-10-01“过期活动进历史”。`src/shared/collection-window.ts` 的 `endedBeforeThisMonth` 以来源时区判断：`claimEnd` 早于本月 1 日即不提交。作用于官方页面抽取与线索抽取（`pipeline/run.ts`，计入 `stats.endedSkipped`；线索的候选全部已结束时直接关闭并写明截止日）及受阻线索复核（`pipeline/lead-review.ts`，以官方原文为证结案）。没有写明结束、仍在进行的旧帖照常收录，不按发布时间判过期；`standing` 与 `reset` 标签不受影响，Codex reset 专用流程、管理员手动与快速上架、官方补证更新已有待审稿也不经过这道门。审核侧同口径见仓库审核技能。

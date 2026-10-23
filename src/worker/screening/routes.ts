@@ -10,6 +10,7 @@ import { compareQueueOrder, latestUsefulReviewAt, systemDueAt } from '../../shar
 import { buildMemoryPage, reviewerNames } from './memory';
 import { ScreeningStore } from './store';
 import { confirmAutoClosed, listAutoClosed, markWronglyClosed } from './spot-check';
+import { listNoisySources, listPageRefusals, undoPageRefusal } from './page-refusals';
 import { applyModelDuplicate, applyRecordedModelDuplicates, confirmModelClosedCard, listModelClosedCards, trustedDuplicateModels, undoModelClosedCard } from './model-duplicate';
 import { activeTitleRules, applyRuleToOpenLeads, createIntakeRule, listIntakeRules, retireIntakeRule, RuleError, suggestIntakeRules } from './intake-rules';
 import type { Env } from '../index';
@@ -240,6 +241,14 @@ screeningAdminRoutes.post('/spot-check/cards/:id/undo', async c => {
   try { return c.json(await undoModelClosedCard(c.env.DB, c.req.param('id'), c.get('who'))); }
   catch (error) { if (error instanceof IdentityError) return c.json({ error: error.message }, error.status); throw error; }
 });
+/** Re-reads closed by the owner's own refusal of the same passage on the same page; undo reopens that refusal (admin only). */
+screeningAdminRoutes.get('/spot-check/refusals', async c => c.json({ refusals: await listPageRefusals(c.env.DB, Math.min(30, Math.max(1, Number(c.req.query('days') ?? 7) || 7))) }));
+screeningAdminRoutes.post('/spot-check/refusals/:id/undo', async c => {
+  try { return c.json(await undoPageRefusal(c.env.DB, c.req.param('id'), c.get('who'))); }
+  catch (error) { if (error instanceof IdentityError) return c.json({ error: error.message }, error.status); throw error; }
+});
+/** Sources re-read often without a new perk, for the owner to blacklist (admin only). */
+screeningAdminRoutes.get('/noisy-sources', async c => c.json({ sources: await listNoisySources(c.env.DB, Math.min(90, Math.max(7, Number(c.req.query('days') ?? 30) || 30))) }));
 /** One-off: apply recorded trusted verdicts to cards opened before the switch. Dry run unless dryRun=false. */
 screeningAdminRoutes.post('/model-duplicates/apply', async c => {
   const body = z.object({ dryRun: z.boolean().default(true), cursor: z.string().max(200).nullish() }).safeParse(await c.req.json().catch(() => ({})));
