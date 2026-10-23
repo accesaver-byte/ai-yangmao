@@ -625,6 +625,17 @@ admin.post('/platforms/:id/:action{approve|reject}', async c => {
   return c.json({ ok: true });
 });
 
+/** Blacklist or restore a source (admin only; 2026-10-22). Disabling stops collection; past entries and decisions stay. */
+admin.post('/sources/:id/enabled', async c => {
+  const body = z.object({ on: z.boolean(), reason: z.string().trim().min(2).max(500) }).safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: '请写明停用或恢复的理由' }, 400);
+  const at = new Date().toISOString();
+  const row = await c.env.DB.prepare(`UPDATE sources SET enabled=?, config=json_set(config,'$.enabledChange',json(?)) WHERE id=? RETURNING id, enabled`)
+    .bind(body.data.on ? 1 : 0, JSON.stringify({ on: body.data.on, reason: body.data.reason, by: c.get('who'), at }), c.req.param('id')).first<{ id: string; enabled: number }>();
+  if (!row) return c.json({ error: '没有这个信源' }, 404);
+  return c.json({ ok: true, enabled: !!row.enabled });
+});
+
 admin.post('/sources/:id/auto-publish', async c => {
   const { on } = await c.req.json().catch(() => ({ on: true })) as { on: boolean };
   const [source] = await db(c.env).select().from(s.sources).where(eq(s.sources.id, c.req.param('id')));

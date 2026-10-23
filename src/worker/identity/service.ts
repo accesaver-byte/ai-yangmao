@@ -2,7 +2,7 @@ import {assertOfficialLeadRejection} from '../official-lead-policy';
 import {prepareMembershipFields,MembershipError} from '../membership';
 import {membershipFacts} from '../../shared/membership';
 import {withMembershipFacts,membershipFactConsistent} from '../../shared/identity/membership';
-import {findReviewedLegacy,findSameSourceReread,hasKnownTerms} from './reviewed-legacy';
+import {findReviewedLegacy,findSameSourceReread,findSameSourceRefusal,hasKnownTerms,type OwnerDecisionMemo} from './reviewed-legacy';
 import {visibilityState,activeVisibilityPredicate} from './visibility';
 import {taskSourcesCte} from './task-sources';
 import {retrieveManualHistory} from './manual-retrieval';
@@ -385,8 +385,9 @@ export class IdentityService {
   const blockKey=productId&&mechanism?productId+':'+mechanism:null;
   const blockRevision=blockKey?(await this.db.prepare('SELECT revision FROM identity_blocks WHERE block_key=?').bind(blockKey).first<{revision:number}>())?.revision??0:0;
   if(blockKey)expected.push({kind:'block',id:blockKey,revision:blockRevision});
+  const ownerMemo:OwnerDecisionMemo={};
   if(!control&&!ambiguousFamily&&!candidate.task_id&&receipt.outcome!=='duplicate_rejected'){
-   const reviewed=await findReviewedLegacy(this.db,candidate.raw_candidate_json,facts)??await findSameSourceReread(this.db,candidate.raw_candidate_json,facts,candidate.observation_id,candidate.source_fetch_id??null);
+   const reviewed=await findReviewedLegacy(this.db,candidate.raw_candidate_json,facts)??await findSameSourceReread(this.db,candidate.raw_candidate_json,facts,candidate.observation_id,candidate.source_fetch_id??null,ownerMemo);
    if(reviewed){
     if(legacyJob){if(reviewed.entityId!==legacyJob.entityId)throw new IdentityError(409,'official review resolved a different activity');builder.acknowledgeOfficialJob(legacyJob.offerId,legacyJob.originalJob,reviewed.revision);}
     expected.push(...reviewed.relatedRevisions.map(r=>({kind:'entity' as const,id:r.id,revision:r.revision})));
@@ -399,13 +400,15 @@ export class IdentityService {
     return this.commit(builder,expected,receipt);
    }
   }
-  const claimMemory=receipt.outcome!=='duplicate_rejected'&&(control||!ambiguousFamily)?await findClaimMemory(this.db,candidate.id,facts,evidence):{match:null,unresolved:false};
+  let claimMemory=receipt.outcome!=='duplicate_rejected'&&(control||!ambiguousFamily)?await findClaimMemory(this.db,candidate.id,facts,evidence):{match:null,unresolved:false};
+  // 2026-10-22: the owner's refusal of the same passage on the same page closes an unchanged re-read.
+  if(!control&&!ambiguousFamily&&!candidate.task_id&&!claimMemory.match&&receipt.outcome!=='duplicate_rejected'){const refusal=await findSameSourceRefusal(this.db,candidate.raw_candidate_json,facts,{text:evidence.fullText,truncated:evidence.truncated},ownerMemo);if(refusal)claimMemory={match:refusal,unresolved:false};}
   const claimReopen=!!(control&&claimMemory.match?.reopen.allowed&&control.task.kind==='evidence_reopen'&&!control.task.entity_id&&control.task.task_key===reviewTaskKey({kind:'evidence_reopen',entityId:'claim:'+claimMemory.match.canonicalCandidateId,refusalDecisionId:claimMemory.match.decision.id,basisHash:candidate.facts_hash})&&await hashTerms(facts)===candidate.facts_hash);
   if(control&&claimMemory.match&&!claimReopen)throw new IdentityError(409,'review the original claim refusal before resolving a different activity identity');
   if(claimMemory.match&&!claimReopen){
-   const memory=claimMemory.match;receipt.decisionId=memory.decision.id;receipt.outcome=memory.reopen.allowed?'evidence_reopen':'duplicate_rejected';receipt.reasonCodes=memory.reopen.allowed?memory.reopen.reasonCodes:['existing_claim_refusal'];
+   const memory=claimMemory.match;receipt.decisionId=memory.decision.id;receipt.outcome=memory.reopen.allowed?'evidence_reopen':'duplicate_rejected';receipt.reasonCodes=memory.reopen.allowed?memory.reopen.reasonCodes:[memory.basis?.reason??'existing_claim_refusal'];
    builder.require('NOT EXISTS(SELECT 1 FROM review_decisions WHERE supersedes_id=?)',[memory.decision.id]);builder.require('EXISTS(SELECT 1 FROM intake_candidates WHERE id=? AND revision=?)',[memory.proofCandidateId,memory.proofRevision]);
-   builder.insert('identity_refusal_applications',{candidate_id:candidate.id,decision_id:memory.decision.id,facts_hash:candidate.facts_hash,rules_version:RULES_VERSION,canonical_candidate_id:memory.canonicalCandidateId,identity_basis_json:JSON.stringify({humanConfirmed:false,proofCandidateId:memory.proofCandidateId,observationId:candidate.observation_id})},'nothing');
+   builder.insert('identity_refusal_applications',{candidate_id:candidate.id,decision_id:memory.decision.id,facts_hash:candidate.facts_hash,rules_version:RULES_VERSION,canonical_candidate_id:memory.canonicalCandidateId,identity_basis_json:JSON.stringify({humanConfirmed:false,proofCandidateId:memory.proofCandidateId,observationId:candidate.observation_id,...memory.basis})},'nothing');
    if(memory.reopen.allowed){taskKind='evidence_reopen';taskKey=reviewTaskKey({kind:'evidence_reopen',entityId:'claim:'+memory.canonicalCandidateId,refusalDecisionId:memory.decision.id,basisHash:candidate.facts_hash});}
   }
   if(claimMemory.unresolved)receipt.reasonCodes.push('claim_identity_unproven');

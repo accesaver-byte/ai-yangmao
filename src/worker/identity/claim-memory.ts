@@ -6,7 +6,9 @@ import {readReviewDecision} from './store';
 export function groundedClaim(facts:CanonicalTermsV1,evidence:EvidenceContext,human=false):boolean {
  return !!claimIdentityKey(facts)&&!evidence.truncated&&(human||evidence.sourceVerified)&&facts.occurrenceAnchor.state==='known'&&evidenceGrounded(facts.occurrenceAnchor.evidenceRefs,evidence)&&facts.occurrenceAnchor.evidenceRefs.some(id=>evidence.quoteById[id].includes(facts.occurrenceAnchor.state==='known'?facts.occurrenceAnchor.value:''));
 }
-export interface ClaimMatch {decision:ReviewDecision;canonicalCandidateId:string;proofCandidateId:string;proofRevision:number;reopen:ReopenEvaluation}
+export interface ClaimMatch {decision:ReviewDecision;canonicalCandidateId:string;proofCandidateId:string;proofRevision:number;reopen:ReopenEvaluation;
+ /** Why a refusal from elsewhere applies, stored with the application (e.g. same_page_refusal). */
+ basis?:{reason:string}&Record<string,unknown>}
 interface ProofRow extends Record<string,unknown>{proof_id:string;proof_revision:number;proof_facts:string;proof_raw:string;proof_observation:string;proof_text:string;proof_truncated:number;proof_trust:string;canonical_claim:string;identity_basis:string}
 function proofEvidence(row:ProofRow,facts:CanonicalTermsV1):EvidenceContext {
  const trust=JSON.parse(row.proof_trust),raw=JSON.parse(row.proof_raw) as {quotes?:{id:string;quote:string}[]};return {observationId:row.proof_observation,fullText:row.proof_text,truncated:!!row.proof_truncated,sourceVerified:trust.sourceVerified===true&&facts.issuerProductId.state==='known'&&facts.issuerProductId.value===trust.productId,quoteById:Object.fromEntries((raw.quotes??[]).map(q=>[q.id,q.quote]))};
