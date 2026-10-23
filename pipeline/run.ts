@@ -22,6 +22,8 @@ import { BudgetExhaustedError, BudgetLedgerError, modelBudget } from './budget';
 import { offerIn, type LeadIn, type OfferIn } from '../src/shared/ingest';
 import { runScreening, screenCandidateReceipts } from './screening/run';
 import { endedBeforeThisMonth } from '../src/shared/collection-window';
+/** In enforce mode the Worker anchors a candidate on an evidence quote found verbatim in its submitted text; without one it can only fail. */
+const unanchored = (o: OfferIn) => process.env.IDENTITY_MODE === 'enforce' && !!o.sourceText && !Object.values(o.evidence.excerpts).some(q => !!q && o.sourceText!.includes(q));
 import { loadMemory } from './screening/memory';
 import { screeningMode, type PlatformProfile } from '../src/shared/screening/types';
 import { resolve } from 'node:path';
@@ -44,7 +46,7 @@ async function screeningProfiles(): Promise<PlatformProfile[]> {
 const LEAD_LIMIT = Number(process.env.LEAD_LIMIT ?? 50);
 const onlyList = (process.env.ONLY_SOURCES ?? '').split(',').map(s => s.trim()).filter(Boolean);
 const only = onlyList.length ? onlyList : null; // 留空 = 全部信源
-const stats = { leadsTriaged: 0, leadOffers: 0, costCny: 0, deferred: 0, backlogDeferred: 0, rereadUnchanged: 0, endedSkipped: 0, unchangedPages: 0, leadsLinkedByUrl: 0, systemicErrors: 0, sources: 0, fetchedSources: 0, ok: 0, failed: 0, changed: 0, leads: 0, offers: 0, pending: 0, extractSkipped: 0, verificationChecked: 0, verificationFailed: 0, verificationDeferred: 0, tokens: 0, coverageDegraded: false, errors: [] as string[],aihotResets:{published:0,manual:0,failed:0,manualReasons:[] as {subject:string;reason:string}[]} };
+const stats = { leadsTriaged: 0, leadOffers: 0, costCny: 0, deferred: 0, backlogDeferred: 0, rereadUnchanged: 0, endedSkipped: 0, unanchoredSkipped: 0, unchangedPages: 0, leadsLinkedByUrl: 0, systemicErrors: 0, sources: 0, fetchedSources: 0, ok: 0, failed: 0, changed: 0, leads: 0, offers: 0, pending: 0, extractSkipped: 0, verificationChecked: 0, verificationFailed: 0, verificationDeferred: 0, tokens: 0, coverageDegraded: false, errors: [] as string[],aihotResets:{published:0,manual:0,failed:0,manualReasons:[] as {subject:string;reason:string}[]} };
 /** 本轮系统性错误（某个环节整体失败），区别于单个信源、条目或线索的错误；后者在健康页逐条列出。 */
 const systemic = (message: string) => { stats.errors.push(message); stats.systemicErrors++; };
 const fetchedSourceIds=new Set<string>();
@@ -142,7 +144,9 @@ async function extractAndPostUnlocked(src: Source, url: string, text: string, so
     if (approved && approvedTermsStillPresent(approved.excerpts, pageText)) { log(`  ${offers[i].id} 已批准条款原文仍在页面上，跳过重复提交`); stats.rereadUnchanged++; offers.splice(i, 1); continue; }
     // 只收现行、即将开始或本月内结束的权益（2026-10-22）：页面上的旧活动不再进审核。
     const ended = endedBeforeThisMonth(offers[i]);
-    if (ended) { log(`  ${offers[i].id} 已于 ${ended} 结束（早于本月），不再收录`); stats.endedSkipped++; offers.splice(i, 1); }
+    if (ended) { log(`  ${offers[i].id} 已于 ${ended} 结束（早于本月），不再收录`); stats.endedSkipped++; offers.splice(i, 1); continue; }
+    // 2026-10-23: re-reads whose quotes are not on the page used to fail as "identity extraction incomplete" every run.
+    if (unanchored(offers[i])) { log(`  ${offers[i].id} 摘录不在页面原文中，无法定位，跳过`); stats.unanchoredSkipped++; offers.splice(i, 1); }
   }
   if (!offers.length) return true;
   if (DRY) { offers.forEach(o => log('  羊毛', o.id, o.title, `类型=${o.type} 对象=${o.audience} 门槛=${o.requirements.join(',')} 额度=${o.valueText}`)); stats.offers += offers.length; return true; }
@@ -433,7 +437,8 @@ async function triageLeads(plats: Plat[]) {
       const scopeError=p&&leadScopeMismatch(l,{...p,staffHandles:[]},[],o);
       if(scopeError){invalidCount++;log(`  #${l.id} ${scopeError}`);continue;}
       const v = offerIn.safeParse(o);
-      if (v.success) valid.push(v.data); else { invalidCount++; log(`  #${l.id} 字段不合规「${e.title}」：${v.error.issues.map(i => i.path.join('.') + ' ' + i.message).join('；').slice(0, 120)}`); }
+      if (v.success && unanchored(v.data)) { invalidCount++; log(`  #${l.id} 摘录不在原文中「${e.title}」，保留线索人工处理`); }
+      else if (v.success) valid.push(v.data); else { invalidCount++; log(`  #${l.id} 字段不合规「${e.title}」：${v.error.issues.map(i => i.path.join('.') + ' ' + i.message).join('；').slice(0, 120)}`); }
     }
     // 线索讲的是早于本月已结束的活动时不再收录（2026-10-22）；仍在进行的旧帖照常处理。
     const ended = valid.flatMap(v => { const end = endedBeforeThisMonth(v); return end ? [{ title: v.title, end }] : []; });
@@ -452,6 +457,11 @@ async function triageLeads(plats: Plat[]) {
         continue;
       }
       stats.leadOffers += res.results.filter(x => !x.error && !('skipped' in x) && !x.unchanged).length;
+      // 2026-10-23: lead-born dedupe cards get the same card-level screening as official-page cards.
+      if (screeningMode({ SCREENING_MODE: process.env.SCREENING_MODE }) !== 'off') {
+        try { await screenCandidateReceipts(res.results, valid, await loadMemory(), { deadlineAt: deadline, dry: DRY, log }); }
+        catch (error) { systemic(`candidate screening: ${(error as Error).message}`); }
+      }
       for (const saved of res.results.filter(x => !x.error && !('skipped' in x))) {
         const record = valid.find(v => v.id === saved.id);
         if (!record) continue;
