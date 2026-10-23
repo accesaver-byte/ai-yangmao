@@ -29,6 +29,7 @@ export function toOffer(src: Source, e: Extracted & { fixedId?: string; sameAs?:
     // 模型说有截止日期却给不出具体日期（如“免费 7 天”但没写从哪天起）：按截止未知保留，交给人工审核，而不是整条丢弃
     endKind: e.endKind === 'date' && !e.claimEnd ? 'unknown' : e.endKind,
     creditValidity: e.creditValidity ? clip(e.creditValidity, 100) : null, sourceTz: e.sourceTz || 'UTC', steps: (e.steps ?? []).slice(0, 4).map(x => clip(x, 200)), firstChannel: src.kind,
-    evidence: { url, tier: (src.tier === 'lead' ? 'site' : src.tier) as OfferIn['evidence']['tier'], capturedAt: new Date().toISOString(), pageHash: sha256(text), excerpts: e.excerpts },
+    evidence: { url, tier: (src.tier === 'lead' ? 'site' : src.tier) as OfferIn['evidence']['tier'], capturedAt: new Date().toISOString(), pageHash: sha256(text), excerpts: e.excerpts,
+      ...(e.notYetLive ? { upcoming: { announcedAt: e.publishedAt ?? new Date().toISOString(), ...(e.liveBy ? { by: e.liveBy } : {}) } } : {}) },
   });
 }

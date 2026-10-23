@@ -247,6 +247,14 @@ screeningAdminRoutes.post('/spot-check/refusals/:id/undo', async c => {
   try { return c.json(await undoPageRefusal(c.env.DB, c.req.param('id'), c.get('who'))); }
   catch (error) { if (error instanceof IdentityError) return c.json({ error: error.message }, error.status); throw error; }
 });
+/** Announcements with no stated time that are still unconfirmed 14 days on: the owner confirms or withdraws them (admin only). */
+screeningAdminRoutes.get('/coming-soon-review', async c => {
+  const before = new Date(Date.now() - 14 * 86400_000).toISOString();
+  const rows = await c.env.DB.prepare(`SELECT id, title, platform_id platformId, json_extract(evidence,'$.upcoming.announcedAt') announcedAt, json_extract(evidence,'$.url') url FROM offers
+    WHERE review_state='approved' AND withdrawn_at IS NULL AND json_extract(evidence,'$.upcoming') IS NOT NULL AND json_extract(evidence,'$.upcoming.by') IS NULL
+      AND json_extract(evidence,'$.upcoming.announcedAt')<? ORDER BY announcedAt LIMIT 100`).bind(before).all();
+  return c.json({ offers: rows.results });
+});
 /** Sources re-read often without a new perk, for the owner to blacklist (admin only). */
 screeningAdminRoutes.get('/noisy-sources', async c => c.json({ sources: await listNoisySources(c.env.DB, Math.min(90, Math.max(7, Number(c.req.query('days') ?? 30) || 30))) }));
 /** One-off: apply recorded trusted verdicts to cards opened before the switch. Dry run unless dryRun=false. */

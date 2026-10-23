@@ -181,6 +181,10 @@ Worker 变量 `SCREENING_GATE0_MODE=auto`（与 `SCREENING_MODE` 分开，模型
 
 「自动关闭抽查 → 🧠 沿用你的拒绝自动结案」按被沿用的拒绝列出最近 7 天的结案次数；「↩ 不该沿用，恢复审核」对原拒绝执行 `reopenDecision`，内容回到查重队列，此后不再沿用。初筛页「噪声信源」列出 30 天内被重读至少 5 次却没有新上架福利的信源，可写明理由停用。接口（仅管理员）：`GET /api/admin/screening/spot-check/refusals`、`POST .../refusals/:id/undo`、`GET /api/admin/screening/noisy-sources`、`POST /api/admin/sources/:id/enabled`（`{on,reason}`，记录在 `config.enabledChange`）。
 
+### 即将开始：官方预告（2026-10-23）
+
+首页「即将开始」除写明未来开始日的限时活动外，还收官方已预告、尚未开放的福利：抽取输出 `notYetLive` 与可选 `liveBy`，`toOffer` 写入 `evidence.upcoming = {announcedAt, by?}`；AIHOT 已预告未确认的重置写 `evidence.landsBy`。首页在 `by`/`landsBy` 之前显示为即将开始（标注预计开放或落地时间）；没写时间的预告只在公布后 14 天内显示，之后列入初筛页「预告待确认」（`GET /api/admin/screening/coming-soon-review`），由管理员在线编辑去掉预告或撤下。常驻类福利的预告同样显示。
+
 ### 无法定位的重读与线索卡筛选（2026-10-23）
 
 身份 enforce 模式下，Worker 只接收至少有一段摘录逐字出现在提交原文中的候选；模型复用已批准条目 ID、摘录又不在页面上（或被 `toOffer` 清空）时，每轮都报 `identity extraction incomplete`，6 小时全量采集几乎轮轮标红。现在 `pipeline/run.ts` 提交前先做同样的检查：官方页面候选跳过并计入 `stats.unanchoredSkipped`，线索候选计为字段不合规、线索保持待人工处理。线索抽取与受阻线索复核产生的查重卡现在也调用 `screenCandidateReceipts` 做卡片级筛选，`SCREENING_DUPLICATE_MODELS` 的模型结案因此覆盖线索卡。
