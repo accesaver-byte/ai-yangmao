@@ -86,6 +86,8 @@ export const offerIn = z.object({
     tier: z.enum(['site', 'docs', 'official', 'staff', 'media', 'tested']),
     capturedAt: z.string(),
     claimEndDerivation: claimEndDerivationSchema.optional(),
+    /** An announced, unconfirmed reset's landing deadline (AIHOT schedule); the homepage lists it as coming soon until then. */
+    landsBy: z.iso.datetime({ offset: true }).optional(),
     pageHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     excerpts: z.object({ benefit: z.string().optional(), eligibility: z.string().optional(), claim: z.string().optional(), validity: z.string().optional() }),
   }),

@@ -119,6 +119,7 @@ function statusOf(o, k = 0) {
   if (o.ty === 'standing') return 'standing';
   if (o.ty === 'apply') return 'open';
   if (o.s != null && startInstant(o).getTime() > at.getTime()) return 'upcoming';
+  if (o.evidence?.landsBy && Date.parse(o.evidence.landsBy) > at.getTime()) return 'upcoming'; // announced reset not yet landed
   if (o.ek === 'date' && endInstant(o).getTime() - at.getTime() <= 3 * DAY) return 'ending';
   return 'active';
 }
@@ -696,7 +697,7 @@ function pToday() {
     <div class="card"><h3>按模态分</h3><p class="sub">一条羊毛可能同时覆盖多个模态</p><div class="chart" id="cModal" style="height:270px"></div></div>
   </section>
   <section>${secH('即将开始', '官方已公布、还没开始的活动')}
-    <div class="rows">${upcoming.map(o => orow(o, `${md(dayAt(o.s))}开始`)).join('') || emptySheep('暂时没有已公布的新活动。')}</div>
+    <div class="rows">${upcoming.map(o => orow(o, o.evidence?.landsBy ? `预计 ${new Date(o.evidence.landsBy).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 前落地` : `${md(dayAt(o.s))}开始`)).join('') || emptySheep('暂时没有已公布的新活动。')}</div>
   </section>
   <section>${secH('进行中的羊毛', '按薅度分排序')}${ocards(act.slice().sort((a, b) => score(b) - score(a)), 12)}</section>`;
 

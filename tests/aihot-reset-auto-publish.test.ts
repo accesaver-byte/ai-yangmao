@@ -212,3 +212,8 @@ it('an incidental "only" is not an eligibility limit, but an audience "only" sti
  f.sqlite.prepare("INSERT INTO leads(id,origin,url,status) VALUES(2,'aihot',?,'new')").run(url);
  const narrowed=await input(text+'\nGlobal reset, only for accounts on the team.');expect((await prepareAiHotReset(env(),narrowed)).outcome).toBe('manual');
 });
+it('an announced, unconfirmed reset carries its landing deadline for the coming-soon list; a confirmed one does not',async()=>{
+ expect((await day17().then(buildAiHotReset)).evidence.landsBy).toBe('2026-10-22T17:00:00.000Z');
+ const link='https://x.com/thsottiaux/status/2112432076767289678';
+ expect(buildAiHotReset({...await input("@thsottiaux\n2026-10-20T06:33:48.000Z\nDay 15/ Nevermind, we're still cooking... and reset. Enjoy.",link),aihotEvent:aiHotEventSchema.parse(events.day15)}).evidence.landsBy).toBeUndefined();
+});

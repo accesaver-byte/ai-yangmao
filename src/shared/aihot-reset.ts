@@ -22,7 +22,7 @@ export const aiHotResetInput=z.object({url:z.url(),sourceText:z.string().min(1).
 export type AiHotResetInput=z.infer<typeof aiHotResetInput>;
 const day=(date:Date)=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 const fold=(text:string)=>text.normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu,'');
-interface ResetReading {banked:boolean;number:string|null;eventDay:string}
+interface ResetReading {banked:boolean;number:string|null;eventDay:string;landsBy?:string}
 /**
  * AIHOT's own reading of the event decides (admin rule 2026-10-22): employee English is too loose and figurative for
  * patterns ("but no, it's reset day" read as a denial on Day 17). The type, status and time come from AIHOT, the
@@ -52,7 +52,9 @@ function readAiHotEvent(event:AiHotEvent,postId:string,body:string):ResetReading
  // Confirmation time when AIHOT has one; a deadline ("before 10am") counts for the day it closes; otherwise the start.
  const s=event.schedule,at=event.confirmedAt?Date.parse(event.confirmedAt):s?.precision==='deadline'&&s.through?Date.parse(s.through)-1000:Date.parse(s?.from??s?.through??event.createdAt);
  const number=/\bday\s*(\d+)\s*\//i.exec(body)?.[1]??/第\s*(\d+)\s*天/.exec(notes)?.[1]??null;
- return {banked,number,eventDay:day(new Date(at))};
+ // Announced but not yet confirmed, with a landing deadline: coming soon until it lands (2026-10-23).
+ const landsBy=event.status==='announced'&&!event.confirmedAt&&s?.precision==='deadline'&&s.through?new Date(Date.parse(s.through)).toISOString():undefined;
+ return {banked,number,eventDay:day(new Date(at)),...(landsBy?{landsBy}:{})};
 }
 /** Older candidates carry no AIHOT event; their English post is read as before. */
 function readStaffText(body:string,timestamp:number):ResetReading {
@@ -83,7 +85,7 @@ export function buildAiHotReset(input:AiHotResetInput):OfferIn {
  if(!Number.isFinite(timestamp)||Math.abs(timestamp-at)>60000)throw Error('发布时间与原帖 ID 不符');
  // The fetched post binds author, ID and time; AIHOT's event, when supplied, decides what it announces and when.
  const body=lines.slice(2).join('\n').trim(),quote=body;
- const {banked,number,eventDay}=input.aihotEvent?readAiHotEvent(input.aihotEvent,id,body):readStaffText(body,timestamp);
+ const {banked,number,eventDay,landsBy}=input.aihotEvent?readAiHotEvent(input.aihotEvent,id,body):readStaffText(body,timestamp);
  const known=<T>(value:T)=>({state:'known' as const,value,evidenceRefs:['benefit']});
  const unknown={state:'unknown'} as const;
  const facts:CanonicalTermsV1={schemaVersion:'terms-v1',issuerProductId:known('openai'),mechanism:known('extra_reset'),benefitPools:[],eligibility:unknown,geography:unknown,claimChannels:unknown,costs:unknown,
@@ -94,7 +96,7 @@ export function buildAiHotReset(input:AiHotResetInput):OfferIn {
   title:`Tibo ${suffix}Codex ${banked?'重置卡发放':'使用额度重置'}`,type:'perk',modalities:['text'],models:[],tags:['reset'],claimMethod:'auto',requirements:['net'],audience:'unclear',
   valueText:`Tibo 宣布${suffix}${banked?'发放一次可储存的额度重置卡':'一次 Codex 使用额度重置'}；具体适用账号与恢复后可用量以账号用量页面为准。`,
   claimStart:eventDay,claimEnd:eventDay,endKind:'date',sourceTz:'America/Los_Angeles',publishedAt:new Date(timestamp).toISOString(),creditValidity:null,steps:['登录 Codex，查看账号用量页面中的本轮重置结果。'],usdEstimate:null,usdMax:null,
-  evidence:{url:input.url,tier:'staff',capturedAt:input.capturedAt,excerpts:{benefit:quote}},
+  evidence:{url:input.url,tier:'staff',capturedAt:input.capturedAt,...(landsBy?{landsBy}:{}),excerpts:{benefit:quote}},
   valuationFactors:{kind:'plan',price:{catalogId:'chatgpt-plus.amount'},billingPeriod:'month',benchmark:'plan_fraction',referencePlan:'ChatGPT Plus',denominator:{ruleId:'plan_fraction_quarter'},sources:[{id:'benefit',url:input.url,checkedAt:input.capturedAt,excerpt:quote,priceBasis:'管理员授权的单次重置套餐四分之一参照，非官方赠金面额'}]},
  });
 }
