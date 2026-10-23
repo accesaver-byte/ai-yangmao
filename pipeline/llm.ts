@@ -35,6 +35,10 @@ export interface Extracted {
   sourceTz: string;
   steps: string[];
   excerpts: { benefit?: string; eligibility?: string; claim?: string; validity?: string };
+  /** Announced but not yet available (2026-10-23): shown as coming soon. */
+  notYetLive?: boolean;
+  /** When it is expected to go live, if the announcement says so (ISO date or instant). */
+  liveBy?: string | null;
 }
 
 /** One-shot repair instructions for factors that failed preflight; shared by collection and fast-track. */
@@ -97,6 +101,7 @@ ${VALUATION_FACTOR_RULES}- claimStart / claimEnd：官方时区下的日期 YYYY
 - 只有“2026年5月”时，不能输出2026-05-01；日精度不能补成00:00:00Z。原计划5月推出、本轮10月6日新增权益，抽当前扩展权益时claimStart=2026-10-06，publishedAt仅有日期就保留2026-10-06，不猜时刻。
 - 输出前逐项核对日期来源：原计划推出月份不能充当本次新增/扩展权益的开始日；只知道月份时不得补任何具体日，应留空。若正文明确本轮扩展的生效日期，则使用该日期。
 - endKind：有明确截止日期用 date；没写截止日期的活动（包括长期有效的新人礼、充值赠送）用 unknown；只有 type 为 standing 或 apply 时才用 standing
+- notYetLive / liveBy：原文明确是预告、尚未开放（如“即将上线”“下周开放”“coming soon”“will be available on …”）时 notYetLive=true，已经可领为 false；liveBy 填官方写明的预计开放日期或时刻（YYYY-MM-DD 或带时区的时刻），没写就 null，不要猜。
 - creditValidity：领取后额度多久失效，用中文写（如"30 天""每月重置，未用完不结转"），没写就 null
 - sourceTz：官方使用的 IANA 时区（中国厂商一般 Asia/Shanghai，美国厂商 America/Los_Angeles），拿不准用 UTC
 - steps：领取步骤，最多 4 条，用中文写
@@ -283,6 +288,8 @@ export function tidy(o: Extracted): Extracted {
     type: type as Extracted['type'], claimMethod: pick(o.claimMethod, CLAIM_OK, CLAIM_ALIAS, 'auto'),
     audience: (['new', 'old', 'all', 'unclear'].includes(String(low(o.audience))) ? low(o.audience) : 'unclear') as Extracted['audience'],
     sourceTz: validTz(o.sourceTz),
+    notYetLive: o.notYetLive === true,
+    liveBy: typeof o.liveBy === 'string' && Number.isFinite(Date.parse(o.liveBy)) ? o.liveBy.trim() : null,
     // 类型和截止方式要配套：常驻/申请制一定是 standing；其他类型没截止日期时算"截止未知"
     endKind: (['standing', 'apply'].includes(type) ? 'standing' : low(o.endKind) === 'date' && claimEnd ? 'date' : 'unknown') as Extracted['endKind'],
     // 模态只认五种；3D 生成归到图像，其他不认识的去掉，全去掉了按文本。之前模型写了“3d”整条被丢（2026-10-01 Meshy）

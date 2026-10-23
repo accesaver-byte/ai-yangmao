@@ -88,6 +88,8 @@ export const offerIn = z.object({
     claimEndDerivation: claimEndDerivationSchema.optional(),
     /** An announced, unconfirmed reset's landing deadline (AIHOT schedule); the homepage lists it as coming soon until then. */
     landsBy: z.iso.datetime({ offset: true }).optional(),
+    /** Announced but not yet available (2026-10-23): coming soon until `by`, or 14 days after the announcement when no time is given. */
+    upcoming: z.object({ announcedAt: z.union([isoDate, z.iso.datetime({ offset: true })]), by: z.union([isoDate, z.iso.datetime({ offset: true })]).optional() }).optional(),
     pageHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     excerpts: z.object({ benefit: z.string().optional(), eligibility: z.string().optional(), claim: z.string().optional(), validity: z.string().optional() }),
   }),

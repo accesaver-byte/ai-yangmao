@@ -112,14 +112,18 @@ function holidayPast(h) {
   return uniq(names).join('、');
 }
 const isLimited = o => o.ty !== 'standing' && o.ty !== 'apply';
+/* 预告（2026-10-23）：重置的落地时限、或官方写明的开放时间；没写时间的预告只在公布后 14 天内算即将开始，之后交管理员核对。 */
+const UPCOMING_UNDATED_DAYS = 14;
+const comingBy = o => { const ev = o.evidence || {}; if (ev.landsBy) return Date.parse(ev.landsBy); const up = ev.upcoming; if (!up) return NaN; return up.by ? Date.parse(up.by) : Date.parse(up.announcedAt) + UPCOMING_UNDATED_DAYS * 864e5; };
+const comingLabel = o => { const ev = o.evidence || {}, by = ev.landsBy || ev.upcoming?.by; if (by) return `预计 ${new Date(by).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', ...(/T/.test(by) ? { hour: '2-digit', minute: '2-digit' } : {}) })} ${ev.landsBy ? '前落地' : '开放'}`; return ev.upcoming ? '时间未公布' : null; };
 function statusOf(o, k = 0) {
   const at = k === 0 ? new Date() : dayAt(k);
   if (o.withdrawnAt && Date.parse(o.withdrawnAt) <= at.getTime()) return 'ended';
   if (o.ek === 'date' && endInstant(o).getTime() < at.getTime()) return 'ended';
+  if (comingBy(o) > at.getTime()) return 'upcoming'; // announced, not live yet
   if (o.ty === 'standing') return 'standing';
   if (o.ty === 'apply') return 'open';
   if (o.s != null && startInstant(o).getTime() > at.getTime()) return 'upcoming';
-  if (o.evidence?.landsBy && Date.parse(o.evidence.landsBy) > at.getTime()) return 'upcoming'; // announced reset not yet landed
   if (o.ek === 'date' && endInstant(o).getTime() - at.getTime() <= 3 * DAY) return 'ending';
   return 'active';
 }
@@ -661,7 +665,8 @@ function estimatedCountdown(window, now = NOW) {
 function pToday() {
   const act = view(OFFERS.filter(activeLimited));
   const stand = view(OFFERS.filter(o => statusOf(o) === 'standing'));
-  const upcoming = view(OFFERS.filter(o => isLimited(o) && statusOf(o) === 'upcoming')).sort((a, b) => a.s - b.s);
+  const startsAt = o => Number.isFinite(comingBy(o)) ? comingBy(o) : startInstant(o).getTime();
+  const upcoming = view(OFFERS.filter(o => (isLimited(o) || Number.isFinite(comingBy(o))) && statusOf(o) === 'upcoming')).sort((a, b) => startsAt(a) - startsAt(b));
   const ending = act.filter(o => statusOf(o) === 'ending');
   const wx = weatherNow();
   const todayValues = [...act, ...stand];
@@ -697,7 +702,7 @@ function pToday() {
     <div class="card"><h3>按模态分</h3><p class="sub">一条羊毛可能同时覆盖多个模态</p><div class="chart" id="cModal" style="height:270px"></div></div>
   </section>
   <section>${secH('即将开始', '官方已公布、还没开始的活动')}
-    <div class="rows">${upcoming.map(o => orow(o, o.evidence?.landsBy ? `预计 ${new Date(o.evidence.landsBy).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 前落地` : `${md(dayAt(o.s))}开始`)).join('') || emptySheep('暂时没有已公布的新活动。')}</div>
+    <div class="rows">${upcoming.map(o => orow(o, comingLabel(o) ?? `${md(dayAt(o.s))}开始`)).join('') || emptySheep('暂时没有已公布的新活动。')}</div>
   </section>
   <section>${secH('进行中的羊毛', '按薅度分排序')}${ocards(act.slice().sort((a, b) => score(b) - score(a)), 12)}</section>`;
 
@@ -2256,8 +2261,11 @@ async function admScreening() {
   box.innerHTML = `<h2>线索初筛</h2>
     <details data-intake-rules><summary>入口关键词规则</summary><div data-intake-body>展开后读取…</div></details>
     <details data-spot-check><summary>自动关闭抽查</summary><div data-spot-body>展开后读取…</div></details>
-    <details data-noisy><summary>噪声信源</summary><div data-noisy-body>展开后读取…</div></details>`;
+    <details data-noisy><summary>噪声信源</summary><div data-noisy-body>展开后读取…</div></details>
+    <details data-soon><summary>预告待确认</summary><div data-soon-body>展开后读取…</div></details>`;
   const rules=box.querySelector('[data-intake-rules]'),spot=box.querySelector('[data-spot-check]'),noisy=box.querySelector('[data-noisy]');
+  const soon=box.querySelector('[data-soon]');
+  soon.addEventListener('toggle',()=>{if(soon.open&&!soon.dataset.loaded){soon.dataset.loaded='1';loadComingSoonReview(soon.querySelector('[data-soon-body]'));}});
   noisy.addEventListener('toggle',()=>{if(noisy.open&&!noisy.dataset.loaded){noisy.dataset.loaded='1';loadNoisySources(noisy.querySelector('[data-noisy-body]'));}});
   rules.addEventListener('toggle',()=>{if(rules.open&&!rules.dataset.loaded){rules.dataset.loaded='1';loadIntakeRules(rules.querySelector('[data-intake-body]'));}});
   spot.addEventListener('toggle',()=>{if(spot.open&&!spot.dataset.loaded){spot.dataset.loaded='1';loadSpotCheck(spot.querySelector('[data-spot-body]'));}});
@@ -2492,6 +2500,13 @@ async function loadSpotCheck(body) {
       msg.textContent = `已确认 ${confirmed} 条关得对`;
     } catch (e) { msg.textContent = e.message; button.disabled = false; }
   }));
+}
+/* 预告待确认（2026-10-23）：没写开放时间的预告在首页“即将开始”只放 14 天，之后在这里由管理员确认已开放或撤下。 */
+async function loadComingSoonReview(body) {
+  body.textContent = '正在读取…';
+  let data; try { data = await adm('/screening/coming-soon-review'); } catch (e) { body.textContent = '读取失败：' + e.message; return; }
+  body.className = 'small';
+  body.innerHTML = `<p class="muted">官方预告了、但没写开放时间的福利，公布 14 天后仍未确认开放。打开条目核对：已开放就在线编辑去掉预告，未开放或取消就撤下。</p>${data.offers.map(o => `<p><a href="#offer-${esc(o.id)}">${esc(o.title)}</a> <span class="muted">${esc(o.platformId)} · 公布于 ${esc(String(o.announcedAt).slice(0, 10))}</span> <a href="${esc(o.url)}" target="_blank" rel="noopener">官方原文</a></p>`).join('') || '<p class="muted">没有待确认的预告。</p>'}`;
 }
 /* 噪声信源（2026-10-22）：30 天里反复重读却没有带来新福利的信源，供管理员判断是否停用（拉黑）。 */
 async function loadNoisySources(body) {
