@@ -175,6 +175,10 @@ Worker 变量 `SCREENING_GATE0_MODE=auto`（与 `SCREENING_MODE` 分开，模型
 - **存量卡**：上线前已有模型判定的卡不会再筛选。`POST /api/admin/screening/model-duplicates/apply` 默认演练，只报告“would close / keep: 原因”；`{"dryRun":false}` 才结案，每请求 2 张，按 `nextCursor` 续传。
 - 卡片级模型筛选只在官方页面抽取路径运行（`pipeline/run.ts` 的 `screenCandidateReceipts`）；线索经旧适配器（`legacy-adapter-v1`）产生的查重卡没有卡片级判定，模型结案暂不覆盖，线索级判定只在抽查与校准中使用。
 
+### 只收现行权益（2026-10-22）
+
+管理员决定自动采集只收现行、即将开始或本月内结束的权益，取代 2026-10-01“过期活动进历史”。`src/shared/collection-window.ts` 的 `endedBeforeThisMonth` 以来源时区判断：`claimEnd` 早于本月 1 日即不提交。作用于官方页面抽取与线索抽取（`pipeline/run.ts`，计入 `stats.endedSkipped`；线索的候选全部已结束时直接关闭并写明截止日）及受阻线索复核（`pipeline/lead-review.ts`，以官方原文为证结案）。没有写明结束、仍在进行的旧帖照常收录，不按发布时间判过期；`standing` 与 `reset` 标签不受影响，Codex reset 专用流程、管理员手动与快速上架、官方补证更新已有待审稿也不经过这道门。审核侧同口径见仓库审核技能。
+
 ### 入口过滤规则（2026-10-16）
 
 模型筛选仍是影子模式，但**管理员批准的标题规则例外**：线索写入时（`POST /api/ingest/leads`）按 `screening_rules` 中启用的 `title_pattern` 匹配标题，命中即关闭线索（`status=rejected`，经身份系统留拒绝记录），不再研判、搜索或进审核；`SCREENING_MODE=off` 时不生效。后台一级「初筛」页的「入口关键词规则」：

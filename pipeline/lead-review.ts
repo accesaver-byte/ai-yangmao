@@ -1,3 +1,4 @@
+import {endedBeforeThisMonth} from '../src/shared/collection-window';
 import { postIdentityOffers } from './identity-client';
 import {api,fetchPage,officialLinkedUrls,relevantText} from './lib';
 import {extract,modelAvailable,DeferError} from './llm';
@@ -41,6 +42,7 @@ export async function runLeadReviews(options:LeadReviewOptions){
       const urls=[lead.url,...linkedUrls];
       let hasLinkedEvidence=linkedUrls.length>0;
       let pendingClosure:{reason:string;evidenceUrl:string;quote?:string;sourceText:string}|undefined;
+      let endedClosure:{reason:string;evidenceUrl:string;quote:string;sourceText:string}|undefined;
       const processed=new Set<string>();
       const previous=new Set((job.previousCandidates??[]).map(normUrl));
       // 首先读原文，再按目标搜索，避免只靠转述标题或搜索摘要下结论。
@@ -104,6 +106,14 @@ export async function runLeadReviews(options:LeadReviewOptions){
               const prior=staleRound?undefined:sameAs;
               const draft=offerIn.safeParse({...toOffer({id:'',kind:lead.origin,platformId:issuer.id,tier} as Source,{...next,...(prior?{fixedId:prior.id}:{})},page.finalUrl,relevantText(page.text),page),leadId:lead.id,leadReviewJobId:job.jobId});
               if(!draft.success){hadInvalid=true;reasons.push('抽取字段不完整，需补字段');continue;}
+              // 官方原文写明早于本月已结束的活动不再收录（2026-10-22）；有原文为证时可直接结案。
+              const ended=endedBeforeThisMonth(draft.data);
+              if(ended){
+                const why=`官方活动已于 ${ended} 结束（早于本月），按 2026-10-22 规则不再收录`;reasons.push(why);
+                const quote=draft.data.evidence.excerpts.validity??draft.data.evidence.excerpts.benefit;
+                if(!endedClosure&&quote&&page.text.includes(quote))endedClosure={reason:why,evidenceUrl:page.finalUrl,quote,sourceText:page.text.slice(0,250000)};
+                continue;
+              }
               const saved=await postIdentityOffers([draft.data]);
               const record=saved.results[0];
               if(record?.duplicateId){offerIds.push(record.duplicateId);continue;}
@@ -131,6 +141,9 @@ export async function runLeadReviews(options:LeadReviewOptions){
         }
         if(pendingClosure&&!hasLinkedEvidence&&!technical&&!hadInvalid&&!offerIds.length){
           outcome='closed';({reason,evidenceUrl,quote,sourceText}=pendingClosure);
+        }else if(endedClosure&&!technical&&!hadInvalid&&!offerIds.length){
+          // The end date comes from the issuer's own page (often the linked one), so a linked read does not block it.
+          outcome='closed';({reason,evidenceUrl,quote,sourceText}=endedClosure);
         }
       }
       if(outcome!=='linked'&&outcome!=='closed'){

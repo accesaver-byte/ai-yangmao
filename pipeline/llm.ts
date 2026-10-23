@@ -84,7 +84,7 @@ OpenRouter 官方账号的 Try it、上线公告可能把免费信息放在链�
 - 需要公司提交申请并审核获批的创业资助必须是 apply，即使长期接受申请、包含固定赠金或会员，也不是 standing。长期开放只是 endKind=standing，不能反过来改变 type。
 - modalities：text / image / video / audio 的子集，按福利实际覆盖的AI服务填；文本和编程都算text、3D生成算image。参考素材和多模态输入不代表免费生成图片/视频；不能凭平台名或常识补全所有模态。Vidu Q4视频积分为video，Claude第一方API/Team创业权益此处为text。
 - tags：从 reset（额度重置）/ referral（邀请奖励）/ discount（首月或限时折扣）/ daily（每日刷新或每日登录送）里选适用的，可多选，没有就空数组
-- claimStart / claimEnd 务必尽量填：原文写了活动时间就照写；只写了“发布即开始”的，用发布日期当 claimStart。已经结束的活动也要写准起止日期（会作为历史数据进入时间线、日历和羊毛墓场）
+- claimStart / claimEnd 务必尽量填：原文写了活动时间就照写；只写了“发布即开始”的，用发布日期当 claimStart。已经结束的活动也要写准起止日期（程序据此只收现行、即将开始或本月内结束的活动；发布较早但仍在进行的照常输出，不要因发布时间早而判结束）
 - publishedAt：官方发布这条活动的时间，ISO 格式，能精确到时刻就精确到时刻（推文、公告时间），不知道就 null；额度重置一定要填
 - models：这条福利里能免费用的具体模型名，按官方写法逐个列出（如 ["Gemini 3.8 Flash", "GLM-4.7-Flash", "Big Pickle"]）；只是平台通用额度、没点名具体模型就给空数组。不要写“等”“系列”这类泛称
 - claimMethod：auto / signup / app（下载应用并登录，含 App、桌面端、命令行工具）/ form / topup / member / code。官方一般不专门写怎么领，按常识推断：应用的福利＝下载应用并登录（app）；云厂商或模型的福利＝开通并使用服务（signup 或 auto）；会员的福利＝充值开会员（member 或 topup）
