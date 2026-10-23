@@ -1,4 +1,7 @@
 import {endedBeforeThisMonth} from '../src/shared/collection-window';
+import {screenCandidateReceipts} from './screening/run';
+import {loadMemory} from './screening/memory';
+import {screeningMode} from '../src/shared/screening/types';
 import { postIdentityOffers } from './identity-client';
 import {api,fetchPage,officialLinkedUrls,relevantText} from './lib';
 import {extract,modelAvailable,DeferError} from './llm';
@@ -115,6 +118,8 @@ export async function runLeadReviews(options:LeadReviewOptions){
                 continue;
               }
               const saved=await postIdentityOffers([draft.data]);
+              // 2026-10-23: rescued leads that open a dedupe card get card-level screening too.
+              if(screeningMode({SCREENING_MODE:process.env.SCREENING_MODE})!=='off')try{await screenCandidateReceipts(saved.results,[draft.data],await loadMemory(),{deadlineAt,dry:options.dry,log:options.log});}catch(error){options.log('卡片筛选未完成',(error as Error).message);}
               const record=saved.results[0];
               if(record?.duplicateId){offerIds.push(record.duplicateId);continue;}
               if(!record||record.error||record.skipped){hadInvalid=true;reasons.push(record?.error??record?.skipped??'入库未确认');continue;}

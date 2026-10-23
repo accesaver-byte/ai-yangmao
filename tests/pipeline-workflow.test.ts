@@ -68,6 +68,9 @@ function harness(options: HarnessOptions = {}) {
     if(url==='https://mcp.exa.ai/mcp')return options.officialSearchStatus?new Response('unavailable',{status:options.officialSearchStatus}):json({result:{content:[{type:'text',text:(options.officialUrls??['https://vendor.example/confirmed']).map(u=>'URL: '+u).join('\n')}]}});
     if (url.includes('/offers-index')) return options.indexFailure?new Response('unavailable',{status:503}):json({ offers: options.known ?? [], complete:true, nextCursor:null });
     if (url.includes('/screening/memory')) return json({ records: [], rules: [], profiles: options.profiles ?? [], calibrations: [], nextCursor: null });
+    if (url.includes('/identity-leads/')) return json({ status: 'unmanaged' });
+    if (url.includes('/screening/items/')) return json({ decision: null });
+    if (url.includes('/screening/queue')) return json({ items: [] });
     if (url.includes('/corrections?')) return json({ corrections: [] });
     if (url.endsWith('/model-budget/reserve')) return options.budgetDenied ? jsonError() : json({ id: ++reservation });
     if (url.endsWith('/settle')) return json({ ok: true });
@@ -103,6 +106,32 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+describe('quotes that are not on the page, and lead-born dedupe cards (2026-10-23)', () => {
+  const offPage = { ...candidate, excerpts: { benefit: 'Members get a paraphrased 300 dollar credit.' } };
+  it('skips an official-page candidate whose quotes are not on the page instead of failing the run', async () => {
+    vi.stubEnv('FAST_LEADS', '0'); vi.stubEnv('IDENTITY_MODE', 'enforce');
+    const h = harness({ sources: [{ ...rssSource, kind: 'web_list', url: lead.url }], modelOutput: JSON.stringify({ offers: [offPage] }) });
+    const { runPipeline } = await import('../pipeline/run');
+    await runPipeline();
+    expect(h.payloads('/offers')).toEqual([]);
+  });
+  it('keeps a lead in review when its candidate quotes text that is not on the page', async () => {
+    vi.stubEnv('IDENTITY_MODE', 'enforce');
+    const h = harness({ leads: [lead], modelOutput: JSON.stringify({ offers: [offPage] }) });
+    const { runPipeline } = await import('../pipeline/run');
+    await runPipeline();
+    expect(h.payloads('/offers')).toEqual([]);
+    expect(h.payloads('/status').at(-1)).toMatchObject({ status: 'reviewing' });
+  });
+  it('screens the dedupe card a lead opens', async () => {
+    vi.stubEnv('SCREENING_MODE', 'shadow');
+    const h = harness({ leads: [lead], ingestResults: [{ id: 'vendor-max-api', identityHandled: true, identityReceipt: { inputId: 'vendor-max-api', candidateId: 'candidate_lead_card_0001', canonicalOfferId: null, entityId: null, versionId: null, decisionId: null, taskId: 'task_lead_card_0001', outcome: 'needs_identity_review', retryable: false, reasonCodes: [] } }] });
+    const { runPipeline } = await import('../pipeline/run');
+    await runPipeline();
+    expect(h.reads.some(url => url.endsWith('/screening/items/lead:1'))).toBe(true);
+  });
+});
 
 describe('lead evidence and value delivery', () => {
   it('keeps an unreachable official link at media tier and ignores untrusted model dollar amounts', async () => {

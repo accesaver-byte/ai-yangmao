@@ -181,6 +181,10 @@ Worker 变量 `SCREENING_GATE0_MODE=auto`（与 `SCREENING_MODE` 分开，模型
 
 「自动关闭抽查 → 🧠 沿用你的拒绝自动结案」按被沿用的拒绝列出最近 7 天的结案次数；「↩ 不该沿用，恢复审核」对原拒绝执行 `reopenDecision`，内容回到查重队列，此后不再沿用。初筛页「噪声信源」列出 30 天内被重读至少 5 次却没有新上架福利的信源，可写明理由停用。接口（仅管理员）：`GET /api/admin/screening/spot-check/refusals`、`POST .../refusals/:id/undo`、`GET /api/admin/screening/noisy-sources`、`POST /api/admin/sources/:id/enabled`（`{on,reason}`，记录在 `config.enabledChange`）。
 
+### 无法定位的重读与线索卡筛选（2026-10-23）
+
+身份 enforce 模式下，Worker 只接收至少有一段摘录逐字出现在提交原文中的候选；模型复用已批准条目 ID、摘录又不在页面上（或被 `toOffer` 清空）时，每轮都报 `identity extraction incomplete`，6 小时全量采集几乎轮轮标红。现在 `pipeline/run.ts` 提交前先做同样的检查：官方页面候选跳过并计入 `stats.unanchoredSkipped`，线索候选计为字段不合规、线索保持待人工处理。线索抽取与受阻线索复核产生的查重卡现在也调用 `screenCandidateReceipts` 做卡片级筛选，`SCREENING_DUPLICATE_MODELS` 的模型结案因此覆盖线索卡。
+
 ### 只收现行权益（2026-10-22）
 
 管理员决定自动采集只收现行、即将开始或本月内结束的权益，取代 2026-10-01“过期活动进历史”。`src/shared/collection-window.ts` 的 `endedBeforeThisMonth` 以来源时区判断：`claimEnd` 早于本月 1 日即不提交。作用于官方页面抽取与线索抽取（`pipeline/run.ts`，计入 `stats.endedSkipped`；线索的候选全部已结束时直接关闭并写明截止日）及受阻线索复核（`pipeline/lead-review.ts`，以官方原文为证结案）。没有写明结束、仍在进行的旧帖照常收录，不按发布时间判过期；`standing` 与 `reset` 标签不受影响，Codex reset 专用流程、管理员手动与快速上架、官方补证更新已有待审稿也不经过这道门。审核侧同口径见仓库审核技能。
