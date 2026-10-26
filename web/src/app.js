@@ -350,6 +350,13 @@ function stChip(o) {
   return `<span class="st ${m.c}"><b>${m.i}</b>${m.l}</span>`;
 }
 const stBadge = (c, i, l) => `<span class="st ${c}"><b>${i}</b>${l}</span>`;
+/* 门槛一眼看（2026-10-26）：零门槛 / 需验证（海外条件、实名、学生、企业、邀请、定向）/ 需付费（会员或充值），与“门槛”筛选同口径。 */
+function barrierChip(o) {
+  const kinds = o.r.map(r => r.split(':')[0]);
+  if (kinds.some(k => k === 'member' || k === 'pay')) return stBadge('', '¥', '需付费');
+  if (kinds.some(k => k !== 'none')) return stBadge('', '◐', '需验证');
+  return stBadge('', '○', '零门槛');
+}
 function miniRadar(o, size = 66) {
   const d = radarData(o).values, n = d.length, c = size / 2, R = size / 2 - 5;
   const pt = (i, r) => { const a = -Math.PI / 2 + i * 2 * Math.PI / n; return [c + Math.cos(a) * r, c + Math.sin(a) * r].map(v => v.toFixed(1)).join(','); };
@@ -577,7 +584,7 @@ function ocard(o, hidden = false) {
   const [frac, col] = barOf(o), track = frac == null ? '<div class="bar unknown" aria-hidden="true"></div>' : `<div class="bar" aria-hidden="true"><i style="width:${(frac * 100).toFixed(0)}%;background:${col}"></i></div>`;
   return `<article class="ocard"${hidden ? ' hidden' : ''}>
     <a class="stretch" href="#offer-${o.id}" aria-label="${esc(o.t)}"></a>
-    <div class="oc-top">${etag(o.ty)}${stChip(o)}</div>
+    <div class="oc-top">${etag(o.ty)}${stChip(o)}${barrierChip(o)}</div>
     <div style="min-width:0"><p class="oc-title">${esc(o.t)}</p><div class="oc-plat">${esc(o.plat.name)} · ${CLAIM[o.c]}</div><div class="oc-val">${valLabel(o)}</div>${hasDisplayValue(o) && valueAssumption(o) ? `<div class="small muted value-assumption">${esc(valueAssumption(o))}</div>` : ''}</div>
     ${miniRadar(o)}
     <div class="oc-foot">
@@ -1447,7 +1454,7 @@ function pOffer(id) {
   const same = OFFERS.filter(x => x.p === o.p && x.id !== o.id);
   const wanted = MINE.want.includes(o.id), got = claimedThisMonth(o.id);
   main().innerHTML = ribbon() + `<div class="crumb"><a href="${esc(offerReturnHash)}" data-offer-back>← 返回</a> / <a href="#platform-${o.p}">${esc(o.plat.name)}</a></div>
-  <div class="dt-top">${etag(o.ty)}${stChip(o)}<span class="score" title="薅度分">${sc}<small>薅度</small></span></div>
+  <div class="dt-top">${etag(o.ty)}${stChip(o)}${barrierChip(o)}<span class="score" title="薅度分">${sc}<small>薅度</small></span></div>
   <h1 class="dt-title">${esc(o.t)}</h1>
   <div class="row" style="margin:6px 0 18px">
     ${officialUrl ? `<a class="btn pri" href="${esc(officialUrl)}" target="_blank" rel="noopener">打开官方页面 ↗</a>` : ''}
