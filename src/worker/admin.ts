@@ -383,6 +383,9 @@ admin.post('/offers/:ref/edit', async c => {
   if (!o) return c.json({ error: '找不到这条羊毛' }, 404);
   const body = await c.req.json().catch(() => null) as { fields?: Record<string, unknown>; approve?: boolean; reason?: string; reasonCode?: string; expectedReviewVersion?: string } | null;
   if(c.get('role')!=='admin'&&(body?.fields?.evidence as {tier?:string}|undefined)?.tier==='tested')return c.json({error:'管理员亲测需要管理员确认'},403);
+  // 2026-10-26: an edit's evidence is merged over the stored evidence, so keys the client does not send (deadline
+  // derivation, coming-soon markers, cautions, agent access) survive; the review script only sends url/tier/excerpts.
+  if(body?.fields?.evidence&&typeof body.fields.evidence==='object'){const stored=(typeof o.evidence==='string'?JSON.parse(o.evidence):o.evidence) as Record<string,unknown>|null;const sent=body.fields.evidence as Record<string,unknown>;body.fields.evidence={...(stored??{}),...sent};}
   const identity=await c.env.DB.prepare('SELECT id FROM benefit_entities WHERE canonical_offer_id=?').bind(o.id).first();
   if(identity){
     if(body?.approve)return c.json({error:'请先保存身份草稿，再按其当前版本批准'},409);
