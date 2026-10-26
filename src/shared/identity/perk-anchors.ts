@@ -68,12 +68,21 @@ export function samePerk(a: PerkView, b: PerkView): boolean {
  * A re-read of an approved perk introduces nothing new: every amount, model and requirement it states is already in
  * the approved terms. Wording is ignored; a new number, model or requirement sends it to the owner.
  */
+/**
+ * Durations ("7天编辑历史", "12 个月") and rate multipliers ("0.1×", "2倍") describe how a perk works, not how much it
+ * gives; re-reads mention them in passing (2026-10-26: Tripo "7天", Qoder "从 0.1× 降至 0.0×" kept duplicate cards open).
+ */
+function benefitText(text: string): string {
+  return text.normalize('NFKC').replace(/\d+(?:\.\d+)?\s*(?:[x×倍]|个?(?:分钟|小时|天|日|周|星期|个月|月|年)|(?:minutes?|hours?|days?|weeks?|months?|years?)\b)/gi, ' ');
+}
+/** `net` is a display rule added to international products at intake, not a term of the perk (2026-10-11 network rule). */
+const DISPLAY_REQUIREMENTS = new Set(['unknown', 'none', 'net']);
 export function introducesNothingNew(candidate: PerkView & { steps?: readonly string[] }, approved: { texts: readonly string[]; models?: readonly string[]; requirements?: readonly string[] }): boolean {
   const known = amounts(approved.texts.join(' '));
-  for (const n of amounts(`${candidate.title} ${candidate.valueText}`)) if (!known.has(n)) return false;
+  for (const n of amounts(benefitText(`${candidate.title} ${candidate.valueText}`))) if (!known.has(n)) return false;
   const models = modelSet(approved.models);
   for (const m of modelSet(candidate.models)) if (!models.has(m)) return false;
   const reqs = new Set((approved.requirements ?? []).filter(r => r !== 'unknown'));
-  for (const r of candidate.requirements ?? []) if (r !== 'unknown' && r !== 'none' && !reqs.has(r)) return false;
+  for (const r of candidate.requirements ?? []) if (!DISPLAY_REQUIREMENTS.has(r) && !reqs.has(r)) return false;
   return true;
 }
