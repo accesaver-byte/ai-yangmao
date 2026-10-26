@@ -39,6 +39,10 @@ export interface Extracted {
   notYetLive?: boolean;
   /** When it is expected to go live, if the announcement says so (ISO date or instant). */
   liveBy?: string | null;
+  /** Official cautions in short Chinese (2026-10-26). */
+  cautions?: string[];
+  /** Agent access as the page gives it (2026-10-26). */
+  apiAccess?: { baseUrl?: string; format?: string; modelIds?: string[] } | null;
 }
 
 /** One-shot repair instructions for factors that failed preflight; shared by collection and fast-track. */
@@ -102,6 +106,8 @@ ${VALUATION_FACTOR_RULES}- claimStart / claimEnd：官方时区下的日期 YYYY
 - 输出前逐项核对日期来源：原计划推出月份不能充当本次新增/扩展权益的开始日；只知道月份时不得补任何具体日，应留空。若正文明确本轮扩展的生效日期，则使用该日期。
 - endKind：有明确截止日期用 date；没写截止日期的活动（包括长期有效的新人礼、充值赠送）用 unknown；只有 type 为 standing 或 apply 时才用 standing
 - notYetLive / liveBy：原文明确是预告、尚未开放（如“即将上线”“下周开放”“coming soon”“will be available on …”）时 notYetLive=true，已经可领为 false；liveBy 填官方写明的预计开放日期或时刻（YYYY-MM-DD 或带时区的时刻），没写就 null，不要猜。
+- cautions：官方原文写明、用户使用前应知道的注意事项，最多 5 条中文短句，如“免费模型可能记录提示词并用于改进服务”“中国大陆不可用”“试用结束自动续费”“需绑定信用卡”“免费模型每小时限 200 次”；原文没写就输出 []，不要推测。
+- apiAccess：原文给出可在编程 Agent 中配置的 OpenAI 或 Anthropic 兼容端点时填写 {"baseUrl":"原文中的 base URL","format":"openai|anthropic","modelIds":["原文中的模型 ID"]}，baseUrl 与 modelIds 必须逐字来自原文；没有就输出 null。
 - creditValidity：领取后额度多久失效，用中文写（如"30 天""每月重置，未用完不结转"），没写就 null
 - sourceTz：官方使用的 IANA 时区（中国厂商一般 Asia/Shanghai，美国厂商 America/Los_Angeles），拿不准用 UTC
 - steps：领取步骤，最多 4 条，用中文写
@@ -290,6 +296,7 @@ export function tidy(o: Extracted): Extracted {
     sourceTz: validTz(o.sourceTz),
     notYetLive: o.notYetLive === true,
     liveBy: typeof o.liveBy === 'string' && Number.isFinite(Date.parse(o.liveBy)) ? o.liveBy.trim() : null,
+    cautions: (Array.isArray(o.cautions) ? o.cautions : []).map(String).map(x => x.trim()).filter(x => x.length >= 2 && x.length <= 120).slice(0, 5),
     // 类型和截止方式要配套：常驻/申请制一定是 standing；其他类型没截止日期时算"截止未知"
     endKind: (['standing', 'apply'].includes(type) ? 'standing' : low(o.endKind) === 'date' && claimEnd ? 'date' : 'unknown') as Extracted['endKind'],
     // 模态只认五种；3D 生成归到图像，其他不认识的去掉，全去掉了按文本。之前模型写了“3d”整条被丢（2026-10-01 Meshy）

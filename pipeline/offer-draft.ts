@@ -30,6 +30,10 @@ export function toOffer(src: Source, e: Extracted & { fixedId?: string; sameAs?:
     endKind: e.endKind === 'date' && !e.claimEnd ? 'unknown' : e.endKind,
     creditValidity: e.creditValidity ? clip(e.creditValidity, 100) : null, sourceTz: e.sourceTz || 'UTC', steps: (e.steps ?? []).slice(0, 4).map(x => clip(x, 200)), firstChannel: src.kind,
     evidence: { url, tier: (src.tier === 'lead' ? 'site' : src.tier) as OfferIn['evidence']['tier'], capturedAt: new Date().toISOString(), pageHash: sha256(text), excerpts: e.excerpts,
-      ...(e.notYetLive ? { upcoming: { announcedAt: e.publishedAt ?? new Date().toISOString(), ...(e.liveBy ? { by: e.liveBy } : {}) } } : {}) },
+      ...(e.notYetLive ? { upcoming: { announcedAt: e.publishedAt ?? new Date().toISOString(), ...(e.liveBy ? { by: e.liveBy } : {}) } } : {}),
+      ...(e.cautions?.length ? { cautions: e.cautions } : {}),
+      // Agent access only as the page states it: the base URL and every model ID must be on the page (2026-10-26).
+      ...((() => { const a = e.apiAccess; if (!a?.baseUrl || !/^https:\/\//.test(a.baseUrl) || !text.includes(a.baseUrl) || !['openai', 'anthropic'].includes(a.format ?? '')) return {};
+        return { apiAccess: { baseUrl: a.baseUrl, format: a.format as 'openai' | 'anthropic', modelIds: (a.modelIds ?? []).map(String).filter(id => id && text.includes(id)).slice(0, 20) } }; })()) },
   });
 }
