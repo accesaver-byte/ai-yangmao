@@ -101,7 +101,8 @@ function mergePatch(v: View, patch: Record<string, unknown>) {
   const out = { ...patch };
   if (patch.evidence) {
     const e = patch.evidence as { url?: string; tier?: string; excerpts?: Record<string, string> };
-    out.evidence = { url: e.url ?? v.evidenceUrl, tier: e.tier ?? v.evidenceTier, capturedAt: new Date().toISOString(), excerpts: { ...(v.excerpts ?? {}), ...(e.excerpts ?? {}) } };
+    // Other evidence keys in the patch (cautions, apiAccess…) pass through; the server keeps stored keys not sent.
+    out.evidence = { ...e, url: e.url ?? v.evidenceUrl, tier: e.tier ?? v.evidenceTier, capturedAt: new Date().toISOString(), excerpts: { ...(v.excerpts ?? {}), ...(e.excerpts ?? {}) } };
   }
   return out;
 }
