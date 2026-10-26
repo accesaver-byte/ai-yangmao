@@ -189,6 +189,13 @@ Worker 变量 `SCREENING_GATE0_MODE=auto`（与 `SCREENING_MODE` 分开，模型
 
 身份 enforce 模式下，Worker 只接收至少有一段摘录逐字出现在提交原文中的候选；模型复用已批准条目 ID、摘录又不在页面上（或被 `toOffer` 清空）时，每轮都报 `identity extraction incomplete`，6 小时全量采集几乎轮轮标红。现在 `pipeline/run.ts` 提交前先做同样的检查：官方页面候选跳过并计入 `stats.unanchoredSkipped`，线索候选计为字段不合规、线索保持待人工处理。线索抽取与受阻线索复核产生的查重卡现在也调用 `screenCandidateReceipts` 做卡片级筛选，`SCREENING_DUPLICATE_MODELS` 的模型结案因此覆盖线索卡。
 
+### 查重守卫、就绪检查与详情字段（2026-10-24 至 10-26）
+
+- 回填就绪检查 `requireIdentityReady`（`src/worker/identity/adapters.ts`）不再把规则结案（`resolution.ruleId`）和 gate0 结案的线索当作未完成身份接入；此前一条规则结案的线索（#7907）会阻塞所有平台的身份接入。
+- “没有新内容”守卫 `introducesNothingNew`（`src/shared/identity/perk-anchors.ts`）忽略 `net` 展示门槛（`DISPLAY_REQUIREMENTS`）以及 `benefitText` 中的时长与倍数，避免同一权益因展示口径被判为有新门槛或新金额。
+- 详情页新增「使用前注意」`evidence.cautions[]` 与「在编程 Agent 里使用」`evidence.apiAccess = {baseUrl, format, modelIds}`，均为证据字段、无需迁移；抽取（`pipeline/offer-draft.ts`）只保留原文中出现的 URL 与模型 ID。卡片与详情显示门槛标签（零门槛 / 需验证 / 需付费），由 `requirements` 推导。
+- 管理员编辑证据时 Worker 以已存证据合并客户端发送的键（`src/worker/admin.ts`），审核脚本 `offer.ts` 的 `mergePatch` 同样逐键合并，客户端未发送的证据键不再被清空。
+
 ### 只收现行权益（2026-10-22）
 
 管理员决定自动采集只收现行、即将开始或本月内结束的权益，取代 2026-10-01“过期活动进历史”。`src/shared/collection-window.ts` 的 `endedBeforeThisMonth` 以来源时区判断：`claimEnd` 早于本月 1 日即不提交。作用于官方页面抽取与线索抽取（`pipeline/run.ts`，计入 `stats.endedSkipped`；线索的候选全部已结束时直接关闭并写明截止日）及受阻线索复核（`pipeline/lead-review.ts`，以官方原文为证结案）。没有写明结束、仍在进行的旧帖照常收录，不按发布时间判过期；`standing` 与 `reset` 标签不受影响，Codex reset 专用流程、管理员手动与快速上架、官方补证更新已有待审稿也不经过这道门。审核侧同口径见仓库审核技能。
