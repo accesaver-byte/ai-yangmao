@@ -88,6 +88,10 @@ export const offerIn = z.object({
     claimEndDerivation: claimEndDerivationSchema.optional(),
     /** An announced, unconfirmed reset's landing deadline (AIHOT schedule); the homepage lists it as coming soon until then. */
     landsBy: z.iso.datetime({ offset: true }).optional(),
+    /** What a user should know before relying on it, as the official page states it (2026-10-26): logging, region, auto-renew. */
+    cautions: z.array(z.string().trim().min(2).max(120)).max(5).optional(),
+    /** How to call it from a coding agent, when the official page gives an OpenAI/Anthropic-compatible endpoint (2026-10-26). */
+    apiAccess: z.object({ baseUrl: z.url(), format: z.enum(['openai', 'anthropic']), modelIds: z.array(z.string().trim().min(1).max(120)).max(20).default([]) }).optional(),
     /** Announced but not yet available (2026-10-23): coming soon until `by`, or 14 days after the announcement when no time is given. */
     upcoming: z.object({ announcedAt: z.union([isoDate, z.iso.datetime({ offset: true })]), by: z.union([isoDate, z.iso.datetime({ offset: true })]).optional() }).optional(),
     pageHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
