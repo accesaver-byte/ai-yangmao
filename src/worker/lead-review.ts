@@ -20,7 +20,7 @@ leadReviewRoutes.get('/queue',async c=>{
   const ids=(c.req.query('ids')??'').split(',').filter(Boolean).map(Number);
   const urgency = new Map((await readUrgentReviews(c.env.DB)).filter(r=>r.kind==='lead').map(r=>[Number(r.id),r]));
   const rows=(await db(c.env).select().from(s.leads).where(eq(s.leads.status,'reviewing')))
-    .filter(l=>(!ids.length||ids.includes(l.id))&&leadReviewDue(l)&&(ids.length>0||!leadReviewStale(l))&&!urgency.get(l.id)?.expired)
+    .filter(l=>(!ids.length||ids.includes(l.id))&&leadReviewDue(l)&&(ids.length>0||!leadReviewStale(l)))
     .sort((a,b)=>{const ua=urgency.get(a.id),ub=urgency.get(b.id);return (ua&&ub?urgentFirst(ua,ub):0)||leadPriority(a)-leadPriority(b)||(a.resolution?.attempts??0)-(b.resolution?.attempts??0)||a.id-b.id;});
   const selected=rows.slice(0,limit);
   if(limit>=4&&rows.length>limit){const oldest=[...rows].sort((a,b)=>a.id-b.id)[0];if(!selected.includes(oldest))selected[limit-1]=oldest;}
@@ -29,7 +29,6 @@ leadReviewRoutes.get('/queue',async c=>{
 leadReviewRoutes.post('/:id/claim',async c=>{
   const d=db(c.env),[l]=await d.select().from(s.leads).where(eq(s.leads.id,Number(c.req.param('id'))));
   if(!l||!leadReviewDue(l))return c.json({claimed:false});
-  if((await readUrgentReview(c.env.DB,`lead:${l.id}`))?.expired)return c.json({claimed:false});
   const resolution:LeadResolution={status:'checking',jobId:crypto.randomUUID(),attempts:(l.resolution?.attempts??0)+1,inconclusive:l.resolution?.inconclusive??0,
     checkedAt:new Date().toISOString(),nextAttemptAt:null,reason:'正在读取原文并搜索官方出处',queries:[],candidates:[],offerIds:l.resolution?.offerIds??[]};
   const changed=await d.update(s.leads).set({resolution}).where(and(eq(s.leads.id,l.id),eq(s.leads.status,'reviewing'),

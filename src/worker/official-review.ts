@@ -19,7 +19,7 @@ import { leadPriority } from '../shared/leads';
 import { claimEndAt } from '../shared/lifecycle';
 import { officialTier, officialReviewDue, OFFICIAL_REVIEW_LEASE_MS, type OfficialReview } from '../shared/official-review';
 import type { Env } from './index';
-import { readUrgentReview, readUrgentReviews, urgentFirst } from './screening/urgent-review';
+import { readUrgentReviews, urgentFirst } from './screening/urgent-review';
 const db=(env:Env)=>drizzle(env.DB,{schema:s});
 export const officialReviewRoutes=new Hono<{Bindings:Env}>();
 async function context(env:Env,id:string) {
@@ -50,7 +50,7 @@ officialReviewRoutes.get('/queue',async c=>{
     const p=byId.get(o.id),target=p?{...o,...p.candidate} as typeof o:drafts.has(o.id)?{...o,...drafts.get(o.id)}:o;
     const recovery=o.officialReview?.status==='checking'&&now-Date.parse(o.officialReview.checkedAt)>=OFFICIAL_REVIEW_LEASE_MS&&!needsEvidence(target);
     return {o,target,recovery,eligible:!o.withdrawnAt&&(recovery||(approved.has(target.platformId)&&needsEvidence(target)&&(o.reviewState==='pending'||!!p)&&officialReviewDue(o.officialReview,now,`${o.updatedAt}|${p?.updatedAt??''}`)))};
-  }).filter(x=>x.eligible&&(x.recovery||!urgency.get(x.o.id)?.expired));
+  }).filter(x=>x.eligible);
   const rank=(x:typeof candidates[number])=>{
     if(x.recovery)return -1;
     const end=claimEndAt(x.target)?.getTime();
@@ -77,7 +77,6 @@ officialReviewRoutes.post('/:id/claim',async c=>{
     return c.json({claimed:false,recovered:changed.length>0});
   }
   if(!state.eligible || !officialReviewDue(old,now,state.version))return c.json({claimed:false});
-  if((await readUrgentReview(c.env.DB,`offer:${state.offer.id}`,new Date(now)))?.expired)return c.json({claimed:false});
   const review:OfficialReview={identityRevision:state.identityRevision,status:'checking',jobId:crypto.randomUUID(),inputVersion:state.version,originUrl:state.target.evidence.url,attempts:(state.offer.officialReview && state.offer.officialReview.inputVersion===state.version ? state.offer.officialReview.attempts : 0)+1,checkedAt:new Date(now).toISOString(),nextAttemptAt:null,reason:'正在搜索官方出处并核对原文',queries:[],candidates:[]};
   review.unresolvedAttempts=old?.inputVersion===state.version?(old.unresolvedAttempts??(old.status==='unresolved'?old.attempts:0)):0;
   const changed=await db(c.env).update(s.offers).set({officialReview:review}).where(guard).returning({id:s.offers.id});

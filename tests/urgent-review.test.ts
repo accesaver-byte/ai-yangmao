@@ -25,19 +25,18 @@ async function request(path: string, body?: unknown, token = 'admin-test-token-1
 }
 
 describe('紧急福利本地第一版', () => {
-  it('队列读取后才截止的线索不能继续领取自动核实任务', async () => {
+  it('本月内截止的线索仍可领取自动核实，交由月初规则结案而不是滞留', async () => {
     lead(2, '限量兑换码');
     f.sqlite.exec("INSERT INTO screening_items(id,subject_kind,subject_id,state,tier,tier_by,deadline,discovered_at,due_at,updated_at) VALUES('lead:2','lead','2','awaiting_verify','P0','gate0','2026-10-18T00:00:01Z','2026-10-17T23:00:00Z','2026-10-18T00:00:00Z','2026-10-18T00:00:00Z')");
-    expect((await request('ingest/lead-reviews/queue?ids=2', undefined, 'ingest-test-token-123')).body.jobs.map((r: any) => r.id)).toEqual([2]);
     vi.setSystemTime(new Date('2026-10-18T00:00:02Z'));
-    expect((await request('ingest/lead-reviews/2/claim', {}, 'ingest-test-token-123')).body.claimed).toBe(false);
-    expect(f.sqlite.prepare('SELECT resolution FROM leads WHERE id=2').get()).toEqual({ resolution: null });
+    expect((await request('ingest/lead-reviews/queue?ids=2', undefined, 'ingest-test-token-123')).body.jobs.map((r: any) => r.id)).toEqual([2]);
+    expect((await request('ingest/lead-reviews/2/claim', {}, 'ingest-test-token-123')).body.claimed).toBe(true);
   });
-  it('活动截止后不领取官方核实任务，也不写入 checking 状态', async () => {
+  it('活动截止后仍可领取官方核实，只是不再加急', async () => {
     offer('deadline-claim', '2026-10-18');
     vi.setSystemTime(new Date('2026-10-19T00:00:00Z'));
-    expect((await request('ingest/official-reviews/deadline-claim/claim', {}, 'ingest-test-token-123')).body.claimed).toBe(false);
-    expect(f.sqlite.prepare("SELECT official_review FROM offers WHERE id='deadline-claim'").get()).toEqual({ official_review: null });
+    expect((await readUrgentReviews(f.db, new Date())).find(r => r.id === 'deadline-claim')).toMatchObject({ expired: true, tier: 'P3' });
+    expect((await request('ingest/official-reviews/deadline-claim/claim', {}, 'ingest-test-token-123')).body.claimed).toBe(true);
   });
   it('截止时间决定排序，过期和已批准活动不进入紧急区；读取不改变审核状态', async () => {
     offer('soon', '2026-10-18'); offer('later', '2026-10-20'); offer('expired', '2026-10-17'); offer('approved', '2026-10-18', 'approved');
@@ -165,13 +164,11 @@ describe('PR #90 review 回归', () => {
     expect(f.sqlite.prepare('SELECT status FROM leads WHERE id=1').get()).toEqual({ status: 'linked' });
   });
 
-  it('普通 claim 按当前 key 查询，不扫描其他线索或活动', async () => {
+  it('普通 claim 不读取紧急投影，不扫描其他线索或活动', async () => {
     lead(2, '今天发放兑换码');
     const statements: string[] = []; f.inject(sql => { statements.push(sql); });
     expect((await request('ingest/lead-reviews/2/claim', {}, 'ingest-test-token-123')).body.claimed).toBe(true);
-    const screening = statements.find(sql => sql.includes('FROM screening_items'))!;
-    expect(screening).toContain('id=?');
-    expect(statements.some(sql => sql.includes('SELECT subject_key') && !sql.includes('WHERE subject_key=?'))).toBe(false);
+    expect(statements.some(sql => sql.includes('FROM screening_items') || sql.includes('review_urgency_preferences'))).toBe(false);
   });
 
   it('未应用偏好迁移时审核与核实队列可用，仅排序写入明确返回 503', async () => {
