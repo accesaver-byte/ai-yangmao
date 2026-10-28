@@ -21,7 +21,10 @@ export type AiHotEvent=z.infer<typeof aiHotEventSchema>;
 export const aiHotResetInput=z.object({url:z.url(),sourceText:z.string().min(1).max(20000),sourceFetch:sourceFetchSchema,capturedAt:z.iso.datetime({offset:true}),aihotEvent:aiHotEventSchema.optional()}).strict();
 export type AiHotResetInput=z.infer<typeof aiHotResetInput>;
 const day=(date:Date)=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
-const fold=(text:string)=>text.normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu,'');
+// X 的 syndication 接口返回 HTML 实体（Day 23：「iCloud Main &amp; Calendar」），AIHOT 记录的是解码后的「&」；比较前先解码，否则实体里的字母会让原文比对失败。
+const entities:Record<string,string>={amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",nbsp:' '};
+const decodeEntities=(text:string)=>text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi,(m,e:string)=>e[0]==='#'?String.fromCodePoint(parseInt(e[1]==='x'||e[1]==='X'?e.slice(2):e.slice(1),e[1]==='x'||e[1]==='X'?16:10)):entities[e.toLowerCase()]??m);
+const fold=(text:string)=>decodeEntities(text).normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu,'');
 interface ResetReading {banked:boolean;number:string|null;eventDay:string;landsBy?:string}
 /**
  * AIHOT's own reading of the event decides (admin rule 2026-10-22): employee English is too loose and figurative for
