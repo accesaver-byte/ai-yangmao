@@ -19,6 +19,8 @@
 
 ## 方案与实施范围
 
+- [紧急福利优先处理第一版（本地）](urgent-review-local-2026-10-18.md)：待审顶部紧急区、人工排序偏好、核实优先级；尚未部署，不含新增定时任务和提醒。
+
 - [线索筛选重设计](superpowers/specs/2026-10-12-lead-screening-redesign-design.md) / [实施计划](superpowers/plans/2026-10-12-lead-screening-redesign.md)：筛选在身份系统之前记录判定与紧急度；里程碑 1 为影子模式，不关闭、不重排、不发布。
 
 - [20:05会员资格上线结果](membership-live-2026-10-11.md)：D1关联索引、0036–0038、目录与保守资格迁移及线上验证已完成。
@@ -41,12 +43,15 @@
 
 ## 发布、事故与工作流查证
 
+- [PR #90 review 修复](pr90-review-2026-10-21.md)：保留主线修复的 rebase、五类功能回归、紧急排序权限和迁移前置条件；未合并或部署。
+
 - [Windows 开发兼容与公开 Agent 接入（本地）](agent-windows-2026-10-20.md)：两项兼容修复、PowerShell 安装器、按系统与客户端展示 Skill / MCP 配置，以及本地验证与未发布边界。
 - [Windows 与 Agent 接入复查（本地）](agent-windows-2026-10-21.md)：兼容问题修复、回归结果、Codex / Claude Code 的 Skill 与 MCP 真实调用，以及尚未完成的桌面 GUI 和官网安装资产验收。
 
 - [OpenRouter 官方模型证据与审核恢复](openrouter-evidence-recovery-2026-10-18.md)：官方短帖补证、误关恢复、负面学习纠正与平台要点。
 
 - [AIHOT Codex reset 自动上架](aihot-reset-auto-publish-2026-10-18.md)：管理员授权范围、员工原帖证据、持久续传及发布凭证；2026-10-22 起以 AIHOT 事件与中文备注判定。
+- [首屏加载修复与本地验收](first-load-audit-2026-10-17.md)：预取复用、可选数据独立补齐、图表失败降级及验证边界。
 
 - [D1读取额度耗尽与网站恢复](d1-quota-recovery-2026-10-11.md)：公开快照恢复浏览、身份回填关联索引、配额恢复后的调度，以及尚待验证事项。
 

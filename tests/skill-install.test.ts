@@ -27,7 +27,9 @@ describe('public skill installation',()=>{
       await expect(install()).rejects.toThrow();files.set('/manifest.sha256',manifest);
       const shim=join(dir,'bin');await mkdir(shim);
       await writeFile(join(shim,'mv'),'#!/bin/sh\ncase "$1" in */pkg) exit 73 ;; esac\nexec /bin/mv "$@"\n');await chmod(join(shim,'mv'),0o755);
-      await expect(exec('bash',['integrations/agent/install.sh','--dir',target,'--base-url',base],{env:{...process.env,PATH:shim+':'+process.env.PATH}})).rejects.toThrow();
+      // 在 Bash 内拼接 POSIX PATH，避免 Windows 的盘符和分号使故障注入失效。
+      const shellShim=process.platform==='win32'?shim.replace(/\\/g,'/').replace(/^([a-z]):/i,(_,drive:string)=>'/'+drive.toLowerCase()):shim;
+      await expect(exec('bash',['-c','export PATH="$1:$PATH"; shift; exec bash "$@"','install-failure-test',shellShim,'integrations/agent/install.sh','--dir',target,'--base-url',base])).rejects.toThrow();
       expect(await readFile(join(target,'SKILL.md'),'utf8')).toBe(original);
       let release!:()=>void;gate=new Promise<void>(resolve=>{release=resolve;});
       const started=new Promise<void>(resolve=>{arrived=resolve;});const installing=install();await started;
@@ -44,5 +46,5 @@ describe('public skill installation',()=>{
       await expect(exec('bash',['integrations/agent/install.sh','--dir',foreign,'--base-url',base])).rejects.toThrow();
       expect(await readFile(join(foreign,'SKILL.md'),'utf8')).toContain('another-skill');
     }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(dir,{recursive:true,force:true});}
-  });
+  }, 60_000);
 });

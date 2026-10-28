@@ -37,7 +37,9 @@ import * as core from '../src/shared/membership';
 const catalog = {revision:3, products:[{id:'cursor',name:'Cursor',aliases:[],status:'verified',sourceUrl:'https://cursor.com',verifiedAt:'2026-10-11',revision:1},{id:'claude',name:'Claude',aliases:[],status:'verified',sourceUrl:'https://claude.ai',verifiedAt:'2026-10-11',revision:1}],plans:[{id:'cursor-pro',productId:'cursor',name:'Pro',aliases:[],status:'verified',billing:'paid',sourceUrl:'https://cursor.com',verifiedAt:'2026-10-11',revision:1},{id:'claude-pro',productId:'claude',name:'Pro',aliases:[],status:'verified',billing:'paid',sourceUrl:'https://claude.ai',verifiedAt:'2026-10-11',revision:1}]};
 function editorFixture() {
  const {document,window}=parseHTML('<form><div data-membership-editor></div></form>');
- const c=vm.createContext({document,window,structuredClone,YMMembership:core,MEMBERSHIP_CATALOG:catalog,MEMBERSHIP_CATALOG_OK:true,adm:async()=>catalog,esc:(s:unknown)=>String(s).replace(/[<>&"']/g,''),C:{subscriptions:[]}});
+ const c=vm.createContext({document,window,structuredClone,YMMembership:core,initialCatalog:catalog,adm:async()=>catalog,esc:(s:unknown)=>String(s).replace(/[<>&"']/g,''),C:{subscriptions:[]}});
+ vm.runInContext(readFileSync('web/src/data.js','utf8'),c);
+ vm.runInContext('MEMBERSHIP_CATALOG=initialCatalog;MEMBERSHIP_CATALOG_OK=true;',c);
  vm.runInContext(source(),c);
  const change=(selector:string,value:string)=>{const input=document.querySelector(selector)!;Object.defineProperty(input,'value',{configurable:true,value});input.dispatchEvent(new window.Event('change',{bubbles:true}));};
  return {document,window,c,change};

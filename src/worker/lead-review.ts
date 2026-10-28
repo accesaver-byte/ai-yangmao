@@ -11,14 +11,17 @@ import {leadPriority} from '../shared/leads';
 import {leadReviewDue,leadReviewStale,type LeadResolution} from '../shared/lead-review';
 import {officialTier} from '../shared/official-review';
 import type {Env} from './index';
+import { readUrgentReview, readUrgentReviews, urgentFirst } from './screening/urgent-review';
+import { verificationRetryDelayMs, verificationWindowEndsAt } from '../shared/screening/urgency';
 const db=(env:Env)=>drizzle(env.DB,{schema:s});
 export const leadReviewRoutes=new Hono<{Bindings:Env}>();
 leadReviewRoutes.get('/queue',async c=>{
   const limit=Math.max(1,Math.min(10,Number(c.req.query('limit'))||4));
   const ids=(c.req.query('ids')??'').split(',').filter(Boolean).map(Number);
+  const urgency = new Map((await readUrgentReviews(c.env.DB)).filter(r=>r.kind==='lead').map(r=>[Number(r.id),r]));
   const rows=(await db(c.env).select().from(s.leads).where(eq(s.leads.status,'reviewing')))
     .filter(l=>(!ids.length||ids.includes(l.id))&&leadReviewDue(l)&&(ids.length>0||!leadReviewStale(l)))
-    .sort((a,b)=>leadPriority(a)-leadPriority(b)||(a.resolution?.attempts??0)-(b.resolution?.attempts??0)||a.id-b.id);
+    .sort((a,b)=>{const ua=urgency.get(a.id),ub=urgency.get(b.id);return (ua&&ub?urgentFirst(ua,ub):0)||leadPriority(a)-leadPriority(b)||(a.resolution?.attempts??0)-(b.resolution?.attempts??0)||a.id-b.id;});
   const selected=rows.slice(0,limit);
   if(limit>=4&&rows.length>limit){const oldest=[...rows].sort((a,b)=>a.id-b.id)[0];if(!selected.includes(oldest))selected[limit-1]=oldest;}
   return c.json({jobs:selected.map(l=>({id:l.id,title:l.title})),remaining:rows.length});
@@ -70,10 +73,14 @@ leadReviewRoutes.post('/:id/result',async c=>{
   const old=l.resolution,now=Date.now();
   const inconclusive=old.inconclusive+(b.outcome==='manual'?1:0);
   // manualNow：自动核验不可能成功（如微信公众号文章），不再等三次无结论，立即交管理员。
-  const status=b.outcome==='manual'&&inconclusive<3&&!b.manualNow?'retry':b.outcome;
+  let status=b.outcome==='manual'&&inconclusive<3&&!b.manualNow?'retry':b.outcome;
+  const urgent=status==='retry'?await readUrgentReview(c.env.DB,`lead:${l.id}`,new Date(now)):undefined;
+  const tier=urgent&&!urgent.suppressed&&!urgent.expired?urgent.tier:'P3';
+  const verifyUntil=(tier==='P0'||tier==='P1')?Date.parse(verificationWindowEndsAt({tier,discoveredAt:l.createdAt,deadline:urgent?.deadline??null,now:new Date(l.createdAt)})):null;
+  if(status==='retry'&&(urgent?.expired||(verifyUntil!=null&&verifyUntil<=now))) status='manual';
   const delayHours=leadPriority(l)<=1?1:Math.min(24,2**Math.min(5,old.attempts-1));
   const resolution:LeadResolution={status,jobId:b.jobId,attempts:old.attempts,inconclusive,checkedAt:new Date(now).toISOString(),
-    nextAttemptAt:status==='retry'?new Date(now+delayHours*3600_000).toISOString():null,
+    nextAttemptAt:status==='retry'?new Date(Math.min(verifyUntil??Infinity,now+((tier==='P0'||tier==='P1')?verificationRetryDelayMs(tier,old.attempts):delayHours*3600_000))).toISOString():null,
     reason:status==='manual'?'已转为线索审核任务：'+b.reason:b.reason,queries:b.queries,candidates:b.candidates,
     offerIds:[...new Set([...(old.offerIds??[]),...b.offerIds])],evidenceUrl:b.evidenceUrl,quote:b.quote};
   if(c.env.IDENTITY_MODE==='enforce'&&status==='closed'){await closeIdentityLead(c.env.DB,l,resolution,b.sourceText!);return c.json({ok:true,status:'closed',nextAttemptAt:null,identityHandled:true});}

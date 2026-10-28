@@ -13,6 +13,7 @@ import {noticeIdentities,pendingIdentityNotices,identityReviewAlerts,identityGua
 import {canonicalOffers,resolveCanonicalOffer,entityOfferVersion} from './identity/canonical';
 import { identityAdminRoutes } from './identity/routes';
 import { screeningAdminRoutes } from './screening/routes';
+import { urgentReviewQueue } from './screening/urgent-review';
 import { reviewStats } from './review-stats';
 import { IdentityService } from './identity/service';
 import { IdentityError } from './identity/store';
@@ -74,6 +75,7 @@ export const admin = new Hono<{ Bindings: Env; Variables: { role: 'admin' | 'rev
 
 /** 审核员能用的接口：看待审、通过、拒绝、修改、核验记录、线索、补录、补信源、送交平台准入。 */
 const REVIEWER_ALLOWED: [string, RegExp][] = [
+  ['GET', /^\/screening\/urgent$/],
   ['GET', /^\/memberships(?:\/[^/]+\/impact)?$/], ['POST', /^\/memberships$/],
   ['GET', /^\/identity\/tasks$/], ['GET', /^\/identity\/tasks\/[^/]+\/comparisons$/], ['POST', /^\/identity\/tasks\/[^/]+\/(hint|prepare|resolve)$/],
   ['GET', /^\/(whoami|queue|leads)$/], ['GET', /^\/offers\/[^/]+$/],
@@ -224,7 +226,7 @@ admin.get('/queue', async c => {
   const cards=[...pendingCards,...managedCards];
   // 已下架或已标历史的活动留在各自的审核决定里，不再作为队列里的「暂停发布」堆积。
   const counts={activities:pendingCards.length+identityTasks.length,leadReview:leadTasks.length,newLeads};
-  return c.json({pending:cards,counts,managedTaskIds:managedCards.map(c=>c.identityTaskId),leadTasks,
+  return c.json({...await urgentReviewQueue(c.env.DB, now),pending:cards,counts,managedTaskIds:managedCards.map(c=>c.identityTaskId),leadTasks,
     priorityLeads: (await d.select().from(s.leads).where(inArray(s.leads.status,['new','reviewing'])))
       .filter(l=>leadPriority(l)<=1).sort((a,b)=>leadPriority(a)-leadPriority(b)||b.id-a.id).slice(0,10)
       .map(l=>({ id:l.id,title:l.title,url:l.url,status:l.status,note:l.status==='reviewing'?l.raw?.split('[研判]').at(-1)?.slice(0,500):null })),
@@ -546,12 +548,12 @@ admin.post('/offers/:ref/note', async c => {
 });
 
 admin.get('/leads', async c => {
-  const params = z.object({limit:z.coerce.number().int().min(1).max(100).default(30),
+  const params = z.object({id:z.coerce.number().int().positive().optional(),limit:z.coerce.number().int().min(1).max(100).default(30),
     before:z.coerce.number().int().positive().optional(), status:z.enum(['all','new','reviewing','linked','rejected']).default('all')})
     .safeParse(c.req.query());
   if (!params.success) return c.json({error:'线索分页参数不正确'},400);
-  const {limit,before,status}=params.data, d=db(c.env);
-  const state = status==='all' ? inArray(s.leads.status,['new','reviewing']) : eq(s.leads.status,status);
+  const {id,limit,before,status}=params.data, d=db(c.env);
+  const state = and(status==='all' ? inArray(s.leads.status,['new','reviewing']) : eq(s.leads.status,status),id?eq(s.leads.id,id):undefined);
   const [{total}] = await d.select({total:sql<number>`count(*)`}).from(s.leads).where(state);
   const rows=await d.select().from(s.leads).where(and(state,before ? lt(s.leads.id,before):undefined)).orderBy(desc(s.leads.id)).limit(limit+1);
   const page=await canonicalLeadProjection(c.env.DB,rows.slice(0,limit));

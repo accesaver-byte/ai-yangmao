@@ -416,6 +416,10 @@ function baseOpt() {
 function chart(el, opt, set = CHARTS) {
   if (typeof el === 'string') el = $(el);
   if (!el) return null;
+  if (!window.echarts) {
+    el.innerHTML = '<p class="muted small" role="status">图表暂时不可用，活动列表和详情仍可浏览。</p>';
+    return null;
+  }
   const c = echarts.init(el, null, { renderer: 'svg' });
   const b = baseOpt();
   if (opt.tooltip) opt.tooltip = Object.assign({}, b.tooltip, opt.tooltip);
@@ -763,7 +767,7 @@ function pCalendar() {
   $('#pickDate').addEventListener('change', e => { if (e.target.value) { CAL.sel = e.target.value; drawMonths(months); renderDayList(); } });
 }
 function drawMonths(months) {
-  $$('.month .chart').forEach(el => { const c = echarts.getInstanceByDom(el); if (c) { CHARTS.delete(c); c.dispose(); } });
+  $$('.month .chart').forEach(el => { const c = window.echarts?.getInstanceByDom(el); if (c) { CHARTS.delete(c); c.dispose(); } });
   const all = [];
   months.forEach(m => { const days = new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate(); for (let d = 1; d <= days; d++) all.push(dayStats(dayIdx(new Date(m.getFullYear(), m.getMonth(), d)))); });
   const metric = s => CAL.metric === 'count' ? s.n : s.list.some(o => valueGroup(o) === CAL.metric && valueNumber(o) != null) ? s.values[CAL.metric] : null;
@@ -1636,7 +1640,7 @@ function pValuationMethod() {
 
 /* ---------- 覆盖范围 ---------- */
 function pCoverage() {
-  const cv = COVERAGE || { platforms: PLATFORMS.length, sources: 0, byKind: {}, officialPages: [] };
+  const cv = COVERAGE || { platforms: '—', sources: '—', byKind: {}, officialPages: [] };
   const K = { web_list: ['官网页面 / 帮助文档', '每 6 小时，只看羊毛相关句子是否变化'], rss: ['官方 RSS', '每 6 小时'], json: ['官方接口', '每 6 小时'], aihot: ['AIHOT 公开接口', '每小时，含 Codex 重置与赠额'], hn: ['Hacker News', '线索，每 6 小时'], reddit: ['Reddit', '线索，由常开机器中继'], email: ['订阅邮箱', '计划中'], manual: ['补录', '通过 Hermes 转发链接'], sweep: ['周六发现扫描', '计划中'], discord: ['Discord 公告频道', '计划中'] };
   const rows = Object.entries(cv.byKind || {}).map(([k, v]) => [K[k] ? K[k][0] : k, K[k] ? K[k][1] : '', `${v.enabled} 个`, v.failing ? stBadge('warn', '!', `${v.failing} 个连续失败`) : stBadge('good', '✓', '正常')]);
   const gaps = [
@@ -1646,6 +1650,7 @@ function pCoverage() {
   ];
   const plist = uniq((cv.officialPages || []).map(x => x.platformId));
   main().innerHTML = ribbon() + ph('覆盖范围', '我们在看哪些地方、还有哪些看不到。只收能追到官方出处的羊毛，不保证覆盖全球所有活动，也不保证抓到所有短时福利。') + `
+  ${!COVERAGE ? '<p class="small muted" role="status">覆盖统计暂不可用，以下保留默认采集说明和已知缺口。</p>' : ''}
   <section class="kpis" style="margin-top:0">
     <div class="kpi"><span class="k-l">已准入平台</span><span class="k-v">${cv.platforms}<small>个</small></span></div>
     <div class="kpi"><span class="k-l">监控信源</span><span class="k-v">${cv.sources}<small>个</small></span></div>
@@ -2240,7 +2245,9 @@ function reviewWorkspace(box, q, counts) {
   const specs=[['activities','权益审核',counts.activities],['leads','线索复核',counts.leadReview],['live','已上架、字段待补',(q.incomplete||[]).length]];
   const nav=document.createElement('nav');nav.className='review-workspaces';nav.dataset.reviewSummary='';nav.setAttribute('role','tablist');nav.setAttribute('aria-label','审核环节');
   nav.innerHTML=specs.map(([key,label,count])=>`<button type="button" role="tab" id="review-tab-${key}" aria-controls="review-pane-${key}" data-review-tab="${key}" class="review-tone-${key}">${label} <span ${key==='activities'?'data-activity-count':''}>${count}</span></button>`).join('');
-  box.querySelector('[data-review-summary]')?.remove();box.prepend(nav);
+  box.querySelector('[data-review-summary]')?.remove();
+  const urgentSection=box.querySelector('[data-urgent-section]');
+  if(urgentSection)urgentSection.after(nav);else box.prepend(nav);
   const panels={};
   for(const [key,label] of specs){const panel=document.createElement('section');panel.className=`review-pane review-tone-${key}`;panel.dataset.reviewPane=key;panel.hidden=true;panel.id='review-pane-'+key;panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby','review-tab-'+key);panel.innerHTML=`<h2 class="review-workspace-title">${label}</h2>`;panels[key]=panel;box.append(panel);}
   const move=(selector,key)=>box.querySelectorAll(selector).forEach(node=>panels[key]?.append(node));
@@ -2321,6 +2328,8 @@ async function admQueue() {
     ${q.incomplete?.length ? `<section data-live-section><details data-incomplete><summary style="cursor:pointer">字段待补 · ${q.incomplete.length}</summary><div class="grid g2" data-incomplete-body></div></details></section>` : ''}`;
   const selectWorkspace=reviewWorkspace(box,q,counts);
   const identityBox=box.querySelector('[data-identity-slot]');identityBox.dataset.identityReview='';const remainingTasks=(identity.tasks||[]).filter(t=>!managedIds.has(t.id));if(remainingTasks.length||identity.error||identity.nextCursor)renderIdentityTasks(identityBox,{...identity,tasks:remainingTasks},false,managedIds);
+  box.insertAdjacentHTML('afterbegin', urgentReviewHtml(q));
+  bindUrgentReview(box, q);
   bindLeadTasks(box,q.leadTasks||[]);
   box.querySelectorAll('[data-lead-task]').forEach(card=>{const l=q.leadTasks.find(l=>String(l.id)===card.dataset.leadTask);compactReviewCard(card,{title:l.title,url:l.url,status:({checking:'核验中',retry:'等待重试',manual:'需要判断'})[l.resolution?.status]||'待复核',action:'复核线索',facts:[['待处理',l.note],['下次重试',l.resolution?.nextAttemptAt]]});});
   box.querySelectorAll('[data-priority-lead]').forEach(el=>{const lead=(q.priorityLeads||[]).find(l=>String(l.id)===el.dataset.priorityLead);el.querySelector('[data-priority-fast]')?.addEventListener('click',()=>openFastTrackForm({benefit:String(lead.title||'').slice(0,500),url:lead.url||''},lead.id));});
@@ -2645,7 +2654,7 @@ async function loadFastTrackJobs(box) {
       if (complete?.querySelector('[data-membership-editor]')) mountMembershipEditor(complete, { platformId:job(card).platformId,requirements: job(card).requirements || [],membershipRequirement:job(card).membershipRequirement }, {selectionOnly:true});
       const id = card.dataset.ftJob, done = r => { toast(r.state === 'published' ? '已上架' : r.state === 'needs_owner' ? (r.error || '还缺字段：' + (r.missing || []).map(k => FIELD_L[k] || k).join('、')) : '已提交'); loadFastTrackJobs(box); };
       const directory=card.querySelector('[data-ft-directory]');
-      directory?.addEventListener('toggle',async()=>{if(!directory.open||directory.dataset.loaded)return;directory.dataset.loaded='1';const host=directory.querySelector('[data-ft-catalog]');try{MEMBERSHIP_CATALOG=await adm('/memberships');MEMBERSHIP_CATALOG_OK=true;const redraw=()=>{renderMembershipCatalog(host,redraw);adm(`/fast-track/${id}/reconcile`,{}).then(r=>{if(r.state==='queued'||r.state==='published')done(r);}).catch(error=>toast(error.message));};renderMembershipCatalog(host,redraw);}catch(error){host.textContent=error.message;directory.dataset.loaded='';}});
+      directory?.addEventListener('toggle',async()=>{if(!directory.open||directory.dataset.loaded)return;directory.dataset.loaded='1';const host=directory.querySelector('[data-ft-catalog]');try{await loadMembershipCatalog(adm);const redraw=()=>{renderMembershipCatalog(host,redraw);adm(`/fast-track/${id}/reconcile`,{}).then(r=>{if(r.state==='queued'||r.state==='published')done(r);}).catch(error=>toast(error.message));};renderMembershipCatalog(host,redraw);}catch(error){host.textContent=error.message;directory.dataset.loaded='';}});
       card.querySelector('[data-ft-complete]')?.addEventListener('submit', async e => {
         e.preventDefault(); const form = e.currentTarget, fd = new FormData(form), fields = {};
         for (const key of ['title', 'type', 'claimMethod', 'endKind', 'claimEnd']) if (fd.get(key)) fields[key] = String(fd.get(key)).trim();
@@ -2976,6 +2985,7 @@ async function refreshPage() {
   finally { refreshInFlight = false; }
 }
 setInterval(() => {
+  updateUrgentClocks();
   if (document.hidden || keepPage()) return;
   const now = Date.now();
   $$('[data-end]').forEach(el => { el.textContent = cdText(+el.dataset.end - now); });
@@ -3017,12 +3027,19 @@ new MutationObserver(reTheme).observe(document.documentElement, { attributes: tr
   if (agentLanding) render(false);
   else main().innerHTML = emptySheep('正在把羊赶进草地…');
   DATA_LOADING = true;
-  try { await Promise.all([loadData(), restoreAdminRole()]); }
+  try {
+    const [data] = await Promise.all([loadData({ deferExtras: true, onSupplement: () => {
+      if (DATA_LOADING) return;
+      prepare();
+      // 保留正在编辑的表单和打开的浮层，下一次正常重绘会使用新数据。
+      if (!keepPage() && $('#sheet').hidden) { drawShell(); render(true); }
+    } }), restoreAdminRole()]);
+    data.supplements.catch(() => { /* 附加信息不阻断已加载的活动 */ });
+  }
   catch (e) { DATA_LOADING = false; refreshSubscriptionControls(); if (route()[0] !== 'agent') main().innerHTML = emptySheep('数据没有加载成功，请稍后刷新。'); return; }
   DATA_LOADING = false;
   prepare();
   refreshSubscriptionControls();
   drawShell();
-  if (window.echarts) render(false);
-  else main().innerHTML = ribbon() + emptySheep('图表库没有加载成功，请检查网络后刷新。');
+  render(false);
 })();
