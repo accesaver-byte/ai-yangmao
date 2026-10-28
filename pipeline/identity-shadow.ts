@@ -19,7 +19,7 @@ export async function captureIdentityShadow(input: ShadowInput): Promise<{record
   const observedAt=new Date().toISOString();
   const requestId=crypto.randomUUID();
   const text=input.text.slice(0,250000),proof=input.sourceFetch;
-  const observation=observationReceiptSchema.parse(await api('/observations',{requestId,originalUrl:proof?.originalUrl??input.url,finalUrl:proof?.finalUrl??input.url,text,fetchKind:proof&&proof.sourceVerified&&proof.method!=='jina'?'direct':'indirect',sourceId:input.sourceId,observedAt,truncated:input.text.length>250000||proof?.truncated===true,fetchEvidence:proof}));
+  const observation=observationReceiptSchema.parse(await api('/observations',{requestId,originalUrl:proof?.originalUrl??input.url,finalUrl:proof?.finalUrl??input.url,text,fetchKind:proof&&proof.sourceVerified?'direct':'indirect',sourceId:input.sourceId,observedAt,truncated:input.text.length>250000||proof?.truncated===true,fetchEvidence:proof}));
   const candidates=[];
   for(const [index,raw] of input.candidates.entries()) {
     const value=legacyExcerpt.safeParse(raw);

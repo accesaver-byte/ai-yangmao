@@ -364,7 +364,9 @@ function parseLeadResponse(out:string,evidence:string):{json:string;assessment:L
   if(!a)return {json:JSON.stringify({offers:data.offers}),assessment:null};
   if(!['not_benefit','existing','unresolved'].includes(a.outcome)||typeof a.reason!=='string'||!a.reason.trim())throw new ModelOutputError('线索判断缺少具体原因');
   const norm=(v:string)=>v.replace(/\s+/g,' ').trim().toLowerCase();
-  if(a.outcome!=='unresolved'&&(typeof a.quote!=='string'||a.quote.trim().length<12||!norm(evidence).includes(norm(a.quote))))throw new ModelOutputError('线索处理依据不在官方原文中');
+  // 依据摘录不在原文时不采信该判断，但按“无结论”交回，计入 inconclusive 并最终交人工，不当作技术故障无限重试（2026-10-28）。
+  if(a.outcome!=='unresolved'&&(typeof a.quote!=='string'||a.quote.trim().length<12||!norm(evidence).includes(norm(a.quote))))
+    return {json:JSON.stringify({offers:data.offers}),assessment:{outcome:'unresolved',reason:('线索处理依据不在官方原文中：'+a.reason).slice(0,800)}};
   if(a.outcome==='existing'&&(!a.offerId||typeof a.offerId!=='string'))throw new ModelOutputError('关联判断缺少已有活动ID');
   return {json:JSON.stringify({offers:data.offers}),assessment:{outcome:a.outcome,reason:a.reason.slice(0,800),quote:a.quote?.slice(0,2000),offerId:a.offerId}};
 }

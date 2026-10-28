@@ -8,7 +8,7 @@ import {and,eq,sql} from 'drizzle-orm';
 import {z} from 'zod';
 import * as s from '../db/schema';
 import {leadPriority} from '../shared/leads';
-import {leadReviewDue,leadReviewStale,type LeadResolution} from '../shared/lead-review';
+import {LEAD_TECHNICAL_RETRY_LIMIT,leadReviewDue,leadReviewStale,type LeadResolution} from '../shared/lead-review';
 import {officialTier} from '../shared/official-review';
 import type {Env} from './index';
 import { readUrgentReview, readUrgentReviews, urgentFirst } from './screening/urgent-review';
@@ -40,7 +40,7 @@ leadReviewRoutes.post('/:id/claim',async c=>{
   return c.json({claimed:true,jobId:resolution.jobId,lead:l,platforms,sources,existing,previousCandidates:l.resolution?.candidates??[]});
 });
 leadReviewRoutes.post('/:id/result',async c=>{
-  const body=z.object({jobId:z.string().uuid(),outcome:z.enum(['linked','closed','retry','manual']),manualNow:z.boolean().optional(),reason:z.string().min(2).max(1000),
+  const body=z.object({jobId:z.string().uuid(),outcome:z.enum(['linked','closed','retry','manual']),manualNow:z.boolean().optional(),deferred:z.boolean().optional(),reason:z.string().min(2).max(1000),
     offerIds:z.array(z.string()).max(50).default([]),queries:z.array(z.string().max(350)).max(4),candidates:z.array(z.url()).max(12),
     evidenceUrl:z.url().optional(),quote:z.string().max(2000).optional(),sourceText:z.string().max(250000).optional()}).safeParse(await c.req.json().catch(()=>null));
   if(!body.success)return c.json({error:'线索复核结果不完整'},400);
@@ -78,6 +78,10 @@ leadReviewRoutes.post('/:id/result',async c=>{
   const tier=urgent&&!urgent.suppressed&&!urgent.expired?urgent.tier:'P3';
   const verifyUntil=(tier==='P0'||tier==='P1')?Date.parse(verificationWindowEndsAt({tier,discoveredAt:l.createdAt,deadline:urgent?.deadline??null,now:new Date(l.createdAt)})):null;
   if(status==='retry'&&(urgent?.expired||(verifyUntil!=null&&verifyUntil<=now))) status='manual';
+  // 抓取失败、模型输出无效等技术性受阻不计入 inconclusive；连续受阻达到上限就交人工，不再空耗模型与搜索额度（2026-10-28 管理员确认）。
+  // 模型额度耗尽而推迟（deferred）不是这条线索的问题，不计次。
+  const blocked=status==='retry'&&b.outcome==='retry'&&!b.deferred&&old.attempts>=LEAD_TECHNICAL_RETRY_LIMIT;
+  if(blocked){status='manual';b.reason=`自动复核连续 ${old.attempts} 次受阻，请人工判断：${b.reason}`.slice(0,1000);}
   const delayHours=leadPriority(l)<=1?1:Math.min(24,2**Math.min(5,old.attempts-1));
   const resolution:LeadResolution={status,jobId:b.jobId,attempts:old.attempts,inconclusive,checkedAt:new Date(now).toISOString(),
     nextAttemptAt:status==='retry'?new Date(Math.min(verifyUntil??Infinity,now+((tier==='P0'||tier==='P1')?verificationRetryDelayMs(tier,old.attempts):delayHours*3600_000))).toISOString():null,

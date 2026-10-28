@@ -162,7 +162,7 @@ export async function runLeadReviews(options:LeadReviewOptions){
         }
       }
     }catch(e){outcome='retry';reason='复核受阻：'+(e as Error).message.slice(0,800);stop=e instanceof BudgetExhaustedError||e instanceof BudgetLedgerError||e instanceof DeferError;}
-    const receipt=await api<{status:keyof typeof stats}>(`/lead-reviews/${q.id}/result`,{jobId:job.jobId,outcome,...(wechatOnly&&outcome==='manual'?{manualNow:true}:{}),reason,offerIds:[...new Set(offerIds)],queries,candidates:[...new Set([...(job.previousCandidates??[]),...candidates])].slice(-12),evidenceUrl,quote,sourceText});
+    const receipt=await api<{status:keyof typeof stats}>(`/lead-reviews/${q.id}/result`,{jobId:job.jobId,outcome,...(wechatOnly&&outcome==='manual'?{manualNow:true}:{}),...(stop?{deferred:true}:{}),reason,offerIds:[...new Set(offerIds)],queries,candidates:[...new Set([...(job.previousCandidates??[]),...candidates])].slice(-12),evidenceUrl,quote,sourceText});
     if(receipt.status in stats)stats[receipt.status]++;
     options.log(`  受阻线索 #${q.id}：${receipt.status} ${reason.slice(0,100)}`);
     if(stop){stats.deferred+=jobs.length-index-1;break;}
