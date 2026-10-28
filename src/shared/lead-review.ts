@@ -20,6 +20,8 @@ export const LEAD_LEASE_MS=20*60_000;
 /** 自动复核只追最近 3 天的线索：更早的福利多已过期或已收录，反复重试只消耗模型与搜索额度（2026-10-15 管理员要求只追最新）。
  * 管理员补录和管理员手动“重新核验”的线索不受限；过期线索仍留在后台列表，不删除。 */
 export const LEAD_REVIEW_MAX_AGE_MS=3*86400_000;
+/** 技术性受阻（抓取失败、模型输出无效）连续达到该次数即交人工；不含因模型额度耗尽推迟的轮次。 */
+export const LEAD_TECHNICAL_RETRY_LIMIT=4;
 export const ADMIN_RETRY_REASON='管理员要求重新官方核验';
 /** 公众号文章无法自动核验、交管理员一键快速上架的线索复核结论前缀（后台与 Telegram 提醒据此置顶）。 */
 export const WECHAT_FAST_TRACK_REASON='原文是微信公众号文章';

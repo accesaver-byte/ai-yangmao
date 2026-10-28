@@ -201,5 +201,9 @@ it('requires a grounded reason for a lead-resolution decision without weakening 
 it('does not accept fabricated quotes as a reason to close a stuck lead',async()=>{
   vi.stubGlobal('fetch',vi.fn(async()=>gemini(JSON.stringify({offers:[],leadAssessment:{outcome:'not_benefit',reason:'无福利',quote:'This quote is fabricated'}}))));
   const {extract}=await import('../pipeline/llm');
-  await expect(extract('Vendor','https://vendor.example/post','Actual official text',undefined,{leadTarget:'异常'} as any)).rejects.toThrow();
+  const result=await extract('Vendor','https://vendor.example/post','Actual official text',undefined,{leadTarget:'异常'} as any) as any;
+  // 不采信伪造摘录：降为无结论交回，计入 inconclusive 并最终交人工，而不是当技术故障无限重试。
+  expect(result.leadAssessment).toMatchObject({outcome:'unresolved'});
+  expect(result.leadAssessment.reason).toContain('线索处理依据不在官方原文中');
+  expect(result.leadAssessment.quote).toBeUndefined();
 });
