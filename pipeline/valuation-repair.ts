@@ -66,6 +66,9 @@ export function snapFactorQuotes(factors:unknown,page:string):unknown {
 
 /** Deterministic factor tidy before preflight: lift a component-level coverageDays to the recipe, then snap quotes. */
 export function normalizeFactors(factors:unknown,page:string):unknown {
+  // 模型有时把整个估值对象回给我们：{usdEstimate,usdMax,valuationFactors:{kind…}}（2026-10-26 起快速上架 21 条中 8 条），
+  // 外层没有 kind，校验失败后估值被整体丢弃、条目无估值上架。只解开这一层，不改写因子内容。
+  while(factors&&typeof factors==='object'&&!Array.isArray(factors)&&!('kind' in factors)&&'valuationFactors' in factors)factors=(factors as {valuationFactors:unknown}).valuationFactors;
   if(factors&&typeof factors==='object'&&!Array.isArray(factors)){
     const f={...(factors as Record<string,unknown>)},components=Array.isArray(f.components)?f.components as Record<string,unknown>[]:[];
     const days=components.map(c=>c&&typeof c==='object'?c.coverageDays:undefined).filter(Boolean);

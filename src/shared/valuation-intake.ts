@@ -8,7 +8,7 @@ import { sha256 } from './identity/normalize';
 export const valuationSourceSchema=z.object({id:z.string().min(1).max(200),url:z.url(),text:z.string().min(1).max(250000),sourceFetch:sourceFetchSchema,checkedAt:z.string(),role:z.enum(['price','fx'])});
 export type ValuationCollectedSource=z.infer<typeof valuationSourceSchema>;
 export interface ValuationIntakeInput {
-  platformId:string; type:string; models?:string[]; tags?:string[]; valuationFactors?:unknown;
+  platformId:string; type:string; sourceId?:string|null; models?:string[]; tags?:string[]; valuationFactors?:unknown;
   valuationSources?:ValuationCollectedSource[];
   sourceText?:string; sourceFetch?:SourceFetch;
   evidence:{url:string;tier:string;capturedAt:string;excerpts:{benefit?:string}};
@@ -39,7 +39,10 @@ export async function computeCollectedValuation(input:ValuationIntakeInput,now=n
     /(?:发放|赠送|获得).{0,35}(?:1|一)\s*(?:次|张).{0,20}(?:额外|独立).{0,12}重置|(?:额外|独立).{0,12}(?:发放|赠送).{0,12}(?:1|一)\s*(?:次|张).{0,12}重置|(?:receive|get|grant|give|giving|issue|issuing|offer).{0,45}(?:1|one|a single)\s+(?:extra|additional|independent|banked|bonus).{0,25}reset/i.test(sentence)
     && !/every\s*(?:day|week|month)|daily|monthly|每(?:天|周|月)|进度|执行中|正在执行|progress|rollout|processing|status update/i.test(sentence)
     && !/(?:不会|没有|不再|取消|未)(?:.{0,16})(?:发放|赠送|获得|额外|重置)|\b(?:not|never|won't|cannot|no)\b.{0,45}(?:receive|grant|give|extra|additional|reset)/i.test(sentence));
-  const singleReset=input.platformId==='openai'&&!!resetSentence;
+  // 2026-10-18 管理员授权的 AIHOT Codex reset 通道：员工原帖的直接重置（“today is a reset”）同样按 Plus 月价四分之一参照；
+  // 只认本通道的程序生成候选（sourceId、reset 标签、员工证据、X 第一方抓取证明），模型抽取的重置仍须原文写明额外一次。
+  const aihotReset=input.platformId==='openai'&&input.sourceId==='aihot-resets'&&!!input.tags?.includes('reset')&&input.evidence.tier==='staff'&&input.sourceFetch?.method==='first_party_embed';
+  const singleReset=input.platformId==='openai'&&(!!resetSentence||aihotReset);
   const glmTrialCard=input.platformId==='zhipu'&&input.type!=='apply'&&/GLM\s+Coding\s+Plan/i.test(quote)
     &&/(?:7|七)\s*天.{0,12}(?:免费)?体验卡|(?:免费)?体验卡.{0,12}(?:7|七)\s*天|7[- ]day.{0,20}free trial card/i.test(quote)
     &&/免费|free/i.test(quote)&&!/[2-9]\d*\s*张|[二三四五六七八九十]\s*张|多张|multiple cards|(?:two|several)\s+(?:trial )?cards/i.test(quote)

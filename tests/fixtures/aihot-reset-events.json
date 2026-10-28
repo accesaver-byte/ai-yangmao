@@ -225,5 +225,84 @@
    }
   ],
   "url": "https://aihot.news/codex-reset"
+ },
+ "day23": {
+  "id": "reset-2115273064481218829-1-1",
+  "type": "direct_reset",
+  "label": "全员重置",
+  "displayLabel": "重置（形式未明确）",
+  "presentation": {
+   "status": "expired_unconfirmed",
+   "scopeKnown": false,
+   "scopeLabel": null,
+   "kindExplicit": false,
+   "timeInferred": false,
+   "audienceZh": null,
+   "productsZh": null
+  },
+  "estimate": {
+   "from": "2026-10-22T14:55:54.000+08:00",
+   "through": "2026-10-23T02:00:00.000+08:00",
+   "basis": "source",
+   "label": "北京时间 10月22日 14:55–10月23日 02:00",
+   "reason": "按原帖给出的截止时间换算成北京时间，并预留一点延迟。"
+  },
+  "status": "confirmed",
+  "title": "Codex 额度重置已完成",
+  "scope": "",
+  "createdAt": "2026-10-28T10:42:53.000+08:00",
+  "updatedAt": "2026-10-22T14:55:54.000+08:00",
+  "confirmedAt": "2026-10-28T14:29:38.000+08:00",
+  "occurredOn": null,
+  "confirmationBasis": null,
+  "schedule": {
+   "precision": "deadline",
+   "from": "2026-10-28T15:00:00.000+08:00",
+   "through": "2026-10-28T15:00:00.000+08:00",
+   "label": "北京时间预计 10月28日 15:00 前"
+  },
+  "posts": [
+   {
+    "id": "2115330127886463244",
+    "publishedAt": "2026-10-28T14:29:38.000+08:00",
+    "stage": "确认完成",
+    "text": "搞定了。",
+    "originalText": "And it's done.",
+    "fullText": "搞定了。明天见，会有好消息。",
+    "fullOriginalText": "And it's done. See you tomorrow for some good news.",
+    "context": [
+     {
+      "id": "2115273253711409208",
+      "author": "thsottiaux",
+      "relation": "quote",
+      "text": "太平洋时间午夜前落地。",
+      "originalText": "Lands by midnight PST.",
+      "url": "https://x.com/i/status/2115273253711409208"
+     }
+    ],
+    "url": "https://x.com/thsottiaux/status/2115330127886463244"
+   },
+   {
+    "id": "2115273253711409208",
+    "publishedAt": "2026-10-28T10:43:38.000+08:00",
+    "stage": "补充说明",
+    "text": "太平洋时间午夜前落地。",
+    "originalText": "Lands by midnight PST.",
+    "fullText": "太平洋时间午夜前落地。",
+    "fullOriginalText": "Lands by midnight PST.",
+    "context": [
+     {
+      "id": "2115273064481218829",
+      "author": "thsottiaux",
+      "relation": "reply",
+      "text": "Day 23/ 万众期待的 iCloud Mail 和 Calendar 插件。开玩笑的，今天是重置。不过这些确实也是万众期待！",
+      "originalText": "Day 23/ Much requested iCloud Main & Calendar plugins. Just kidding, today is a reset. Still much requested though!",
+      "url": "https://x.com/i/status/2115273064481218829"
+     }
+    ],
+    "url": "https://x.com/thsottiaux/status/2115273253711409208"
+   }
+  ],
+  "url": "https://aihot.news/codex-reset"
  }
 }

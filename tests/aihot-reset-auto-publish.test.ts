@@ -217,3 +217,8 @@ it('an announced, unconfirmed reset carries its landing deadline for the coming-
  const link='https://x.com/thsottiaux/status/2112432076767289678';
  expect(buildAiHotReset({...await input("@thsottiaux\n2026-10-20T06:33:48.000Z\nDay 15/ Nevermind, we're still cooking... and reset. Enjoy.",link),aihotEvent:aiHotEventSchema.parse(events.day15)}).evidence.landsBy).toBeUndefined();
 });
+it('Day 23: the X syndication body keeps HTML entities (&amp;) yet still matches AIHOT\'s decoded text',async()=>{
+ const link='https://x.com/thsottiaux/status/2115273064481218829';
+ const body='Day 23/ Much requested iCloud Main &amp; Calendar plugins. Just kidding, today is a reset. Still much requested though!';
+ expect(buildAiHotReset({...await input('@thsottiaux\n2026-10-28T02:42:53.000Z\n'+body,link),aihotEvent:aiHotEventSchema.parse(events.day23)})).toMatchObject({title:'Tibo Day 23 Codex 使用额度重置',claimStart:'2026-10-27',claimEnd:'2026-10-27'});
+});
