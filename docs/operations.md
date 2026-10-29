@@ -183,6 +183,12 @@ Worker 变量 `SCREENING_GATE0_MODE=auto`（与 `SCREENING_MODE` 分开，模型
 - **与已上架相同**：匹配条目已批准、未撤下、非重置/周期，且线索标题所写金额都在该条目中 → 关联（带 `gate0` 标记，沿用系统关联撤销）。回放 1/1；讯飞“送 1B”新轮次因金额不在条目中而保留。
 - 共同条件：线索仍为 new/reviewing、未挂查重卡、标题不含每日/每周/每月/重置/鸡蛋/签到。结果写 `resolution.screeningModel`，进入「自动关闭抽查」。回滚：清空该变量。
 
+### 旧新闻文章过滤（2026-10-29）
+
+官方新闻列表重读会带回多年前的文章，无截止日的旧促销（xAI 2024-12-12 “currently … $25 free credits”、DeepSeek 2024 R1-Lite 预览）绕过月初过期规则进入查重卡。`staleArticle`（`src/shared/collection-window.ts`）：仅对文章页（/news、/blog、/index、/press 等；不含价格/文档页、X 帖与重置），类型为 free/new/trial、无截止日、文章日期（候选 `publishedAt`，否则页首日期）早于一年的候选不再提交，计入 `stats.staleArticleSkipped`。文章页上模型把抓取日当开始日时改用文章日期。
+
+回放 2026-09-29 至 10-29 的 158 个文章页候选：只跳过 1 条（xAI $25，已被拒），无已批准权益受影响。曾评估 90 天阈值：会误丢 ChatGPT for Clinicians、Tinker 资助、Manus、Trae 试用等仍有效的长期计划，因此改为一年且只限限时类。页面完全没有日期的旧文章（R1-Lite）仍需人工判断。
+
 ### 线索入口收紧（2026-10-29）
 
 非 AI 线索（农行返现、库库ai 网盘会员、Apple 软件更新等）漏入人工队列的三个缺口与对应处理：

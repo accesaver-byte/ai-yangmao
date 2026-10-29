@@ -21,7 +21,7 @@ import { DeferError, extract, llmAvailable, modelAvailable, paidAvailable, type 
 import { BudgetExhaustedError, BudgetLedgerError, modelBudget } from './budget';
 import { offerIn, type LeadIn, type OfferIn } from '../src/shared/ingest';
 import { runScreening, screenCandidateReceipts } from './screening/run';
-import { endedBeforeThisMonth } from '../src/shared/collection-window';
+import { articleDate, endedBeforeThisMonth, isArticleUrl, staleArticle } from '../src/shared/collection-window';
 /** In enforce mode the Worker anchors a candidate on an evidence quote found verbatim in its submitted text; without one it can only fail. */
 const unanchored = (o: OfferIn) => process.env.IDENTITY_MODE === 'enforce' && !!o.sourceText && !Object.values(o.evidence.excerpts).some(q => !!q && o.sourceText!.includes(q));
 import { loadMemory } from './screening/memory';
@@ -46,7 +46,7 @@ async function screeningProfiles(): Promise<PlatformProfile[]> {
 const LEAD_LIMIT = Number(process.env.LEAD_LIMIT ?? 50);
 const onlyList = (process.env.ONLY_SOURCES ?? '').split(',').map(s => s.trim()).filter(Boolean);
 const only = onlyList.length ? onlyList : null; // 留空 = 全部信源
-const stats = { leadsTriaged: 0, leadOffers: 0, costCny: 0, deferred: 0, backlogDeferred: 0, rereadUnchanged: 0, endedSkipped: 0, unanchoredSkipped: 0, unchangedPages: 0, leadsLinkedByUrl: 0, systemicErrors: 0, sources: 0, fetchedSources: 0, ok: 0, failed: 0, changed: 0, leads: 0, offers: 0, pending: 0, extractSkipped: 0, verificationChecked: 0, verificationFailed: 0, verificationDeferred: 0, tokens: 0, coverageDegraded: false, errors: [] as string[],aihotResets:{published:0,manual:0,failed:0,manualReasons:[] as {subject:string;reason:string}[]} };
+const stats = { leadsTriaged: 0, leadOffers: 0, costCny: 0, deferred: 0, backlogDeferred: 0, rereadUnchanged: 0, endedSkipped: 0, staleArticleSkipped: 0, unanchoredSkipped: 0, unchangedPages: 0, leadsLinkedByUrl: 0, systemicErrors: 0, sources: 0, fetchedSources: 0, ok: 0, failed: 0, changed: 0, leads: 0, offers: 0, pending: 0, extractSkipped: 0, verificationChecked: 0, verificationFailed: 0, verificationDeferred: 0, tokens: 0, coverageDegraded: false, errors: [] as string[],aihotResets:{published:0,manual:0,failed:0,manualReasons:[] as {subject:string;reason:string}[]} };
 /** 本轮系统性错误（某个环节整体失败），区别于单个信源、条目或线索的错误；后者在健康页逐条列出。 */
 const systemic = (message: string) => { stats.errors.push(message); stats.systemicErrors++; };
 const fetchedSourceIds=new Set<string>();
@@ -145,6 +145,12 @@ async function extractAndPostUnlocked(src: Source, url: string, text: string, so
     // 只收现行、即将开始或本月内结束的权益（2026-10-22）：页面上的旧活动不再进审核。
     const ended = endedBeforeThisMonth(offers[i]);
     if (ended) { log(`  ${offers[i].id} 已于 ${ended} 结束（早于本月），不再收录`); stats.endedSkipped++; offers.splice(i, 1); continue; }
+    // 2026-10-29：一年以上旧新闻里的限时/新人/试用福利且无截止日（xAI 2024-12 “currently … $25”），视为过期不再收录。
+    const stale = staleArticle(offers[i], url, pageText);
+    if (stale) { log(`  ${offers[i].id} 来自 ${stale} 的旧文章且无截止日，按过期不再收录`); stats.staleArticleSkipped++; offers.splice(i, 1); continue; }
+    // 文章页上模型把抓取当天当作开始日时，改用文章日期（R1-Lite 2024 新闻被写成 2026-10-29 开始）。
+    const published = isArticleUrl(url) ? articleDate(offers[i].publishedAt, pageText) : null;
+    if (published && offers[i].claimStart === new Date().toISOString().slice(0, 10) && published < offers[i].claimStart!) offers[i].claimStart = published;
     // 2026-10-23: re-reads whose quotes are not on the page used to fail as "identity extraction incomplete" every run.
     if (unanchored(offers[i])) { log(`  ${offers[i].id} 摘录不在页面原文中，无法定位，跳过`); stats.unanchoredSkipped++; offers.splice(i, 1); }
   }
