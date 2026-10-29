@@ -16,3 +16,8 @@ it('still waits on an ordinary unreconciled rejection', async () => {
   rejected(9909, { status: 'closed', reason: '模型判断不是 AI 羊毛' });
   await expect(requireIdentityReady(f.db, 'vendor')).rejects.toMatchObject({ status: 409 });
 });
+// 2026-10-29: screening-model closures (#8007, #8057, #8073) blocked all identity intake the same way.
+it('does not wait on screening-model closures', async () => {
+  rejected(9910, { status: 'closed', reason: '入口筛选：模型判断不是 AI 羊毛（新闻）', screeningModel: 'nvidia/nemotron-3-ultra-550b-a55b:free' });
+  await expect(requireIdentityReady(f.db, 'vendor')).resolves.toBeUndefined();
+});
