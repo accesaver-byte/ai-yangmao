@@ -142,6 +142,30 @@ export const VALUATION_PRICE_CATALOG: readonly ValuationPrice[] = [
     sources: [source('https://api-docs.deepseek.com/quick_start/pricing/', '2026-10-18T04:20:00Z',
       '1M INPUT TOKENS (CACHE MISS) OFF-PEAK $0.15 $0.66 PEAK $0.3 $1.32 1M OUTPUT TOKENS OFF-PEAK $0.6 $1.98 PEAK $1.2 $3.96',
       'same_version_official_model_price; off-peak (half of peak) is the lower applicable rate')] },
+  // 2026-10-28: unvalued perks (Kimi K3.1 Pro compensation, JetBrains AI credits, ZCode GLM-5.3 tokens) had no matching price.
+  monthly('kimi-code-plus', 'moonshot', 'Kimi Code Plus', 19, 'USD', true, 'individual/monthly-billing', [
+    source('https://www.kimi.com/code', '2026-10-28T23:40:00Z', 'Plus $15 / month $19 Billed annually $180', 'official_entry_monthly_billing_price (annual-billing $15 not used)'),
+  ]),
+  monthly('kimi-code-pro', 'moonshot', 'Kimi Code Pro', 39, 'USD', false, 'individual/monthly-billing', [
+    source('https://www.kimi.com/code', '2026-10-28T23:40:00Z', 'Pro $31 / month $39 Billed annually $372', 'official_regular_monthly_billing_price'),
+  ]),
+  monthly('kimi-code-max', 'moonshot', 'Kimi Code Max', 99, 'USD', false, 'individual/monthly-billing', [
+    source('https://www.kimi.com/code', '2026-10-28T23:40:00Z', 'Max $79 / month $99 Billed annually $948', 'official_regular_monthly_billing_price'),
+  ]),
+  monthly('jetbrains-ai-pro', 'jetbrains', 'JetBrains AI Pro', 10, 'USD', true, 'monthly/ai-credits', [
+    source('https://www.jetbrains.com/help/ai-assistant/licensing-and-subscriptions.html', '2026-10-28T23:40:00Z',
+      'Each AI credit equals $1 USD charged in your local currency.', 'official_credit_unit_price; AI Pro $10 USD for 10 AI credits per 30-days'),
+  ], { packageUnits: 10, unit: 'ai_credits' }),
+  { id: 'glm-5.3', platformId: 'zhipu', kind: 'token_model', model: 'GLM-5.3', modelClass: 'general_text', currency: 'CNY',
+    authority: 'platform', inputPrice: 8, outputPrice: 28, tokenPriceUnits: 1_000_000, inputMode: 'uncached',
+    genericProxyEligible: false, specification: 'GLM-5.3/1M-context/uncached-input', maxAgeDays: 30,
+    sources: [source('https://bigmodel.cn/pricing', '2026-10-28T23:40:00Z', 'GLM-5.3 输入单价 8元 / M 输出单价 28元 / M 缓存命中 2元 / M',
+      'same_version_official_model_price; CNY per-million input/output')] },
+  { id: 'glm-5.3-flash', platformId: 'zhipu', kind: 'token_model', model: 'GLM-5.3-Flash', modelClass: 'general_text', currency: 'CNY',
+    authority: 'platform', inputPrice: 0.8, outputPrice: 2.8, tokenPriceUnits: 1_000_000, inputMode: 'uncached',
+    genericProxyEligible: false, specification: 'GLM-5.3-Flash/uncached-input', maxAgeDays: 30,
+    sources: [source('https://bigmodel.cn/pricing', '2026-10-28T23:40:00Z', 'GLM-5.3-Flash 0.8元 / M 2.8元 / M 0.23元 / M',
+      'same_version_official_model_price; CNY per-million input/output')] },
   // 2026-10-19 credit-pack benchmarks for platforms whose free/sign-up credits kept valuing as unknown. Official pages only;
   // an official top-up price takes priority over plan arithmetic, otherwise the lower applicable plan rate.
   monthly('meshy-pro', 'meshy', 'Meshy Pro', 20, 'USD', true, 'monthly/credits', [

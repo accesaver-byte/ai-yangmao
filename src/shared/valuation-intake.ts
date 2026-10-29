@@ -124,6 +124,19 @@ export async function computeCollectedValuation(input:ValuationIntakeInput,now=n
     const rates=Object.entries(catalog).filter(([id,entry])=>entry.kind==='fx'&&entry.currency===currency&&/^ecb-\d{4}-\d{2}-\d{2}\./.test(id)).sort(([a],[b])=>b.localeCompare(a));
     return rates[0]?{currency,date:rates[0][0].slice(4,14),usdRate:{catalogId:rates[0][0]}}:null;
   };
+  // Models sometimes cite the fetched ECB source by its source id (usdRate.catalogId="valuation-fx") instead of the
+  // dated fact (2026-10-28: GLM trial card). Bind it to the one ECB fact fetched this run for that currency; never invent a rate.
+  const bindFx=(node:unknown):void=>{
+    if(!node||typeof node!=='object')return;
+    if(Array.isArray(node)){node.forEach(bindFx);return;}
+    const record=node as Record<string,unknown>,fx=record.fx as {currency?:string;usdRate?:{catalogId?:string}}|undefined;
+    if(fx&&typeof fx==='object'&&typeof fx.currency==='string'&&fx.usdRate?.catalogId&&!catalog[fx.usdRate.catalogId]){
+      const fresh=latestFx(fx.currency);
+      if(fresh){record.fx={...fx,...fresh};if(!selectionRules.includes('fx_reference_bound_to_fetched_ecb'))selectionRules.push('fx_reference_bound_to_fetched_ecb');}
+    }
+    for(const value of Object.values(record))if(value!==fx)bindFx(value);
+  };
+  bindFx(selectedFactors);
   if(glmTrialCard||medicalRule){
     const fx=latestFx('CNY');if(!fx)return unknown('已授权权益缺少有效官方汇率',['fresh_profile_fx_missing']);
     if(glmTrialCard||recipe.currency==='CNY')recipe.fx=fx;
