@@ -48,13 +48,13 @@ for (const id of ids) {
       try { [offer] = applyFactorRepairs([offer], issues, parseModelJson(repair.text)); } catch { /* keep the first factors; V2 reports why */ }
     }
     if (process.env.DEBUG_FACTORS) console.log(JSON.stringify({ evidence: o.evidenceUrl, final: proof.sourceFetch?.finalUrl, factors: offer.valuationFactors }).slice(0, 1500));
-    const { valuation, errors } = await computeCollectedValuation({ platformId: o.platformId, type, models: o.models ?? [], tags: o.tags ?? [], valuationFactors: offer.valuationFactors,
+    const { valuation, errors } = await computeCollectedValuation({ platformId: o.platformId, sourceId: o.sourceId ?? (o.platformId === 'openai' && o.evidenceTier === 'staff' && (o.tags ?? []).includes('reset') && /^https:\/\/x\.com\/thsottiaux\/status\//.test(o.evidenceUrl) ? 'aihot-resets' : null), type, models: o.models ?? [], tags: o.tags ?? [], valuationFactors: offer.valuationFactors,
       valuationSources: ctx.sources, sourceText: proof.sourceText, sourceFetch: proof.sourceFetch, evidence: { url: o.evidenceUrl, tier: o.evidenceTier, capturedAt: new Date().toISOString(), excerpts: o.excerpts } } as any);
     const priced = valuation && ['priced', 'provisional'].includes(valuation.status) && valuation.usdEstimate != null;
     console.log(`${priced ? '$' : '-'} ${o.code} ${o.title}：${priced ? `$${valuation!.usdEstimate}（${valuation!.status}，${valuation!.formula ?? ''}）` : `未估值（${(errors[1] ?? errors[0] ?? (offer.valuationFactors as any)?.reason ?? '无可计算因子').slice(0, 120)}）`}`);
     if (apply && priced) {
       const saved = admin(`/offers/${encodeURIComponent(o.id)}/edit`, { fields: { valuation, usdEstimate: valuation!.usdEstimate, usdMax: valuation!.usdMax }, approve: false,
-        expectedReviewVersion: o.reviewVersion, reason: 'V2 补估值：快速上架时未抽取估值因子（2026-10-18 授权）', reasonCode: 'wrong_field' });
+        expectedReviewVersion: o.reviewVersion, reason: process.env.REVALUE_REASON || 'V2 补估值：上架时未抽取估值因子（2026-10-18 授权）', reasonCode: 'wrong_field' });
       console.log(`  已保存${saved.pendingUpdate || saved.taskId ? '为待发布修改' : '并公开'}`);
     }
   } catch (error) { console.log(`! ${id} 失败：${(error as Error).message.slice(0, 160)}`); }
