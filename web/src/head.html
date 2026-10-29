@@ -429,12 +429,9 @@ tr.link:hover td{background:var(--surface-2)}
 .review-workspaces button[aria-selected=true]{background:var(--review-soft);border-color:var(--review-accent);box-shadow:0 0 0 1px var(--review-accent)}
 .review-workspaces button span{font-family:var(--f-num);flex-shrink:0}
 .review-workspace-title{font:600 22px/1.4 var(--f-body);border-left:5px solid var(--review-accent);padding-left:14px;margin:0 0 20px}
-.review-workspace :is(.g2,[data-ft-jobs],[data-lead-section],[data-identity-slot]){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start}
-.review-workspace :is([data-ft-jobs],[data-lead-section],[data-identity-slot])>:not(.review-tile){grid-column:1/-1}
-.review-workspace [data-lead-section]:not([open]){display:block}
-.review-workspace [data-lead-section]>details{display:grid;grid-template-columns:subgrid}
-.review-workspace [data-lead-section]>details:not([open]){display:block}
-.review-workspace [data-lead-section]>details>summary{grid-column:1/-1}
+/* <details> lays its children out inside ::details-content (Chrome 131+), so a details element cannot be the card grid itself; the lead section wraps its cards in .review-tile-grid. */
+.review-workspace :is(.g2,[data-ft-jobs],.review-tile-grid,[data-identity-slot]){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start}
+.review-workspace :is([data-ft-jobs],[data-identity-slot])>:not(.review-tile){grid-column:1/-1}
 .review-group-label,.review-workspace [data-activity-section]>details>summary,.review-workspace [data-live-section] summary,.review-workspace [data-lead-section]>summary{font-size:14px;font-weight:600;color:var(--ink-2);margin:16px 0 12px}
 .review-tile{border-top:4px solid var(--review-accent);display:flex!important;flex-direction:column;gap:14px!important;margin:0!important;padding:18px;min-height:350px;height:100%}
 .review-tile[style*="display: none"],.review-tile[style*="display:none"]{display:none!important}
@@ -465,7 +462,7 @@ body:has(.review-dialog[open]){overflow:hidden}
 :root[data-theme=dark] .review-tone-live{--review-accent:#9dcc8a;--review-soft:#243b24}
 :root[data-theme=dark] .review-primary{color:#142018}
 @media(prefers-color-scheme:dark){:root:not([data-theme=light]) .review-tone-fast{--review-accent:#edbd52;--review-soft:#3b3218}:root:not([data-theme=light]) .review-tone-activities{--review-accent:#8dbdf4;--review-soft:#1c304a}:root:not([data-theme=light]) .review-tone-leads{--review-accent:#bea4ef;--review-soft:#30253f}:root:not([data-theme=light]) .review-tone-live{--review-accent:#9dcc8a;--review-soft:#243b24}:root:not([data-theme=light]) .review-primary{color:#142018}}
-@media(max-width:1150px){.review-workspace :is(.g2,[data-ft-jobs],[data-lead-section],[data-identity-slot]),.review-fast-layout [data-ft-jobs],.review-completed-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.review-workspaces{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:650px){.review-workspace :is(.g2,[data-ft-jobs],[data-lead-section],[data-identity-slot]),.review-fast-layout [data-ft-jobs],.review-completed-grid{grid-template-columns:minmax(0,1fr)}.review-workspaces{gap:8px}.review-workspaces button{padding:12px 10px;font-size:13px}.review-tile{min-height:0}.review-dialog{width:100vw;border-radius:0;border-left:0;border-top:4px solid var(--review-accent)}.review-dialog-body{padding:16px}.review-dialog-bar{padding:12px 16px}}
+@media(max-width:1150px){.review-workspace :is(.g2,[data-ft-jobs],.review-tile-grid,[data-identity-slot]),.review-fast-layout [data-ft-jobs],.review-completed-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.review-workspaces{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:650px){.review-workspace :is(.g2,[data-ft-jobs],.review-tile-grid,[data-identity-slot]),.review-fast-layout [data-ft-jobs],.review-completed-grid{grid-template-columns:minmax(0,1fr)}.review-workspaces{gap:8px}.review-workspaces button{padding:12px 10px;font-size:13px}.review-tile{min-height:0}.review-dialog{width:100vw;border-radius:0;border-left:0;border-top:4px solid var(--review-accent)}.review-dialog-body{padding:16px}.review-dialog-bar{padding:12px 16px}}
 
 </style>
