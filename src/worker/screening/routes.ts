@@ -74,7 +74,9 @@ screeningIngestRoutes.post('/verdicts', async c => {
   const applied = body.data.model === 'gate0' && c.env.SCREENING_GATE0_MODE === 'auto' && body.data.subject.kind === 'lead'
     ? await applyGate0(c.env.DB, Number(body.data.subject.leadId ?? body.data.itemId.slice(5)), verdict)
     : body.data.subject.kind === 'task' && trustedDuplicateModels(c.env).includes(body.data.model)
-      ? await applyModelDuplicate(c.env.DB, String(body.data.subject.taskId ?? body.data.itemId.slice(5)), verdict, { decisionId: decision.id, model: body.data.model }) : null;
+      ? await applyModelDuplicate(c.env.DB, String(body.data.subject.taskId ?? body.data.itemId.slice(5)), verdict, { decisionId: decision.id, model: body.data.model })
+      : body.data.subject.kind === 'lead' && trustedLeadModels(c.env).includes(body.data.model)
+        ? await applyModelLead(c.env.DB, Number(body.data.subject.leadId ?? body.data.itemId.slice(5)), verdict, body.data.model) : null;
   if (applied) await store.markApplied(decision.id, applied);
   return c.json({ decisionId: decision.id, mode, applied: !!applied });
 });
@@ -104,6 +106,59 @@ async function applyGate0(db: D1Database, leadId: number, verdict: { verdict: st
     // A genuine new perk can read like a listed one; conflicting amounts or models mean it is not the same perk.
     if (anchorsConflict(lead.title ?? '', `${offer.title} ${offer.value_text}`)) return null;
     const resolution = { status: 'linked', jobId: `gate0-${leadId}`, attempts: 0, inconclusive: 0, checkedAt: now, nextAttemptAt: null, reason: '入口查重：与已上架活动相同', queries: [], candidates: [], offerIds: [offerId], gate0: true };
+    const r = await db.prepare(`UPDATE leads SET status='linked', offer_id=?, resolution=? WHERE id=? AND status IN ('new','reviewing')`).bind(offerId, JSON.stringify(resolution), leadId).run();
+    return r.meta.changes ? 'linked' : null;
+  }
+  return null;
+}
+
+/**
+ * Shadow phase 2 (admin 2026-10-28): pinned models in SCREENING_LEAD_MODELS act on leads, in two narrow shapes only.
+ * Replayed 10-14..10-28 against the owner's outcomes: "not a perk" closes 41/41, "same as a listed perk" links 1/1.
+ * Unguarded verdicts were 87.7% and closed four new Codex resets, so everything outside the guards stays shadow.
+ * Both land in 「自动关闭抽查」 and can be undone (links carry gate0 so the existing system-link undo applies).
+ */
+export function trustedLeadModels(env: { SCREENING_LEAD_MODELS?: string }): string[] {
+  return (env.SCREENING_LEAD_MODELS ?? '').split(',').map(m => m.trim()).filter(Boolean);
+}
+const LEAD_PERK_WORDS = /免费|赠送|送|额度|限免|补偿|返还|体验金|代金券|积分|credits?|tokens?|\bfree\b|bonus|giveaway|trial|试用|白嫖|羊毛|\$\d|￥|¥|美元|美刀|刀/i;
+/** Launch/news posts often hide a free tier (Flint on OpenRouter, iFlytek X2.6): never closed by a model. */
+const LEAD_LAUNCH_WORDS = /发布|上线|推出|开源|登场|登場|launch|release|introduc|unveil|available|now on|攻略|直通/i;
+const LEAD_RECURRING = /每月|每日|每周|monthly|daily|weekly|重置|reset|鸡蛋|签到|天天/i;
+const AMOUNT = /(\d+(?:\.\d+)?)\s*(亿|万|千|百万|[kmb])?/gi;
+const leadAmounts = (text: string) => new Set([...text.matchAll(AMOUNT)].map(m => m[1] + (m[2] ?? '').toLowerCase()));
+async function fromOfficialAccount(db: D1Database, url: string): Promise<boolean> {
+  let u: URL; try { u = new URL(url); } catch { return true; }
+  const host = u.hostname.replace(/^www\./, '');
+  const rows = (await db.prepare(`SELECT site, x_handles, staff_handles FROM platforms WHERE status='approved'`).all<{ site: string | null; x_handles: string | null; staff_handles: string | null }>()).results;
+  if (host === 'x.com' || host === 'twitter.com') {
+    const handle = u.pathname.split('/')[1]?.toLowerCase();
+    return rows.some(r => [...JSON.parse(r.x_handles || '[]'), ...JSON.parse(r.staff_handles || '[]')].some((h: string) => h.toLowerCase().replace(/^@/, '') === handle));
+  }
+  return rows.some(r => { if (!r.site) return false; try { const s = new URL(r.site).hostname.replace(/^www\./, ''); return host === s || host.endsWith('.' + s); } catch { return false; } });
+}
+async function applyModelLead(db: D1Database, leadId: number, verdict: { verdict: string; matchId: string | null; confidence: number; explanation: string }, model: string): Promise<'closed' | 'linked' | null> {
+  if (!Number.isInteger(leadId) || verdict.confidence < 0.9) return null;
+  const lead = await db.prepare(`SELECT id, title, url, resolution FROM leads WHERE id=? AND status IN ('new','reviewing')`).bind(leadId).first<{ id: number; title: string | null; url: string; resolution: string | null }>();
+  if (!lead || (lead.resolution && (JSON.parse(lead.resolution) as { identityTaskIds?: string[] }).identityTaskIds?.length)) return null;
+  const title = lead.title ?? '';
+  if (!title || LEAD_RECURRING.test(title) || LEAD_LAUNCH_WORDS.test(title) || await fromOfficialAccount(db, lead.url)) return null;
+  const now = new Date().toISOString(), base = { attempts: 0, inconclusive: 0, checkedAt: now, nextAttemptAt: null, queries: [], candidates: [], screeningModel: model };
+  if (verdict.verdict === 'not_a_perk') {
+    if (LEAD_PERK_WORDS.test(title)) return null;
+    const resolution = { ...base, status: 'closed', jobId: `screen-${leadId}`, reason: `入口筛选：模型判断不是 AI 羊毛（${verdict.explanation.slice(0, 300)}）` };
+    const r = await db.prepare(`UPDATE leads SET status='rejected', resolution=? WHERE id=? AND status IN ('new','reviewing')`).bind(JSON.stringify(resolution), leadId).run();
+    return r.meta.changes ? 'closed' : null;
+  }
+  if (verdict.verdict === 'duplicate_published' && verdict.matchId?.startsWith('offer:')) {
+    const offerId = verdict.matchId.slice(6);
+    const offer = await db.prepare(`SELECT id, title, value_text, tags FROM offers WHERE id=? AND review_state='approved' AND withdrawn_at IS NULL`).bind(offerId).first<{ id: string; title: string; value_text: string; tags: string }>();
+    const listed = offer ? `${offer.title} ${offer.value_text}` : '';
+    if (!offer || JSON.parse(offer.tags || '[]').includes('reset') || LEAD_RECURRING.test(listed)) return null;
+    // Every amount the lead states must already be in the listed perk (iFlytek "送1B" was a new round).
+    const listedAmounts = leadAmounts(listed);
+    if ([...leadAmounts(title)].some(a => !listedAmounts.has(a))) return null;
+    const resolution = { ...base, status: 'linked', jobId: `screen-${leadId}`, reason: '入口筛选：模型判断与已上架活动相同', offerIds: [offerId], gate0: true };
     const r = await db.prepare(`UPDATE leads SET status='linked', offer_id=?, resolution=? WHERE id=? AND status IN ('new','reviewing')`).bind(offerId, JSON.stringify(resolution), leadId).run();
     return r.meta.changes ? 'linked' : null;
   }
