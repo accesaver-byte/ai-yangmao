@@ -134,7 +134,12 @@ export async function computeCollectedValuation(input:ValuationIntakeInput,now=n
       const fresh=latestFx(fx.currency);
       if(fresh){record.fx={...fx,...fresh};if(!selectionRules.includes('fx_reference_bound_to_fetched_ecb'))selectionRules.push('fx_reference_bound_to_fetched_ecb');}
     }
-    for(const value of Object.values(record))if(value!==fx)bindFx(value);
+    // A CNY/INR price with no fx at all (2026-10-28: GLM trial card) takes the same fetched ECB fact.
+    if(!fx&&(record.currency==='CNY'||record.currency==='INR')&&('price' in record||'amount' in record)){
+      const fresh=latestFx(record.currency);
+      if(fresh){record.fx=fresh;if(!selectionRules.includes('fx_reference_bound_to_fetched_ecb'))selectionRules.push('fx_reference_bound_to_fetched_ecb');}
+    }
+    for(const value of Object.values(record))if(value!==fx&&value!==record.fx)bindFx(value);
   };
   bindFx(selectedFactors);
   if(glmTrialCard||medicalRule){

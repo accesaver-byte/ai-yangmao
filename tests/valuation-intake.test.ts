@@ -81,6 +81,15 @@ it('a model citing the ECB source id (valuation-fx) is bound to the fetched date
  expect((result.valuation?.inputs as any).ruleIds).toContain('fx_reference_bound_to_fetched_ecb');
 });
 
+it('a CNY price with no fx at all takes the fetched dated ECB fact',async()=>{
+ const sourceUrl='https://bigmodel.cn/grant',text='Free GLM Coding Lite subscription grant.';
+ const fxUrl='https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml';
+ const xml=`<Cube time='2026-10-11'><Cube currency='USD' rate='1.2'/><Cube currency='CNY' rate='9'/><Cube currency='INR' rate='90'/></Cube>`;
+ const result=await computeCollectedValuation({platformId:'zhipu',type:'gift',sourceText:text,sourceFetch:{originalUrl:sourceUrl,finalUrl:sourceUrl,fetchedUrl:sourceUrl,method:'direct',sourceVerified:true,truncated:false,contentHash:await sha256(text)},evidence:{url:sourceUrl,tier:'official',capturedAt:date,excerpts:{benefit:text}},valuationSources:[{id:'fx',role:'fx',url:fxUrl,text:xml,checkedAt:date,sourceFetch:{originalUrl:fxUrl,finalUrl:fxUrl,fetchedUrl:fxUrl,method:'direct',sourceVerified:true,truncated:false,contentHash:await sha256(xml)},catalogFacts:{'ecb-2026-10-11.CNY':{value:999}}} as any],valuationFactors:{kind:'plan',price:{catalogId:'glm-coding-lite.amount'},billingPeriod:'month',currency:'CNY',benchmark:'entry_plan',sources:[{id:'benefit',url:sourceUrl,checkedAt:date,excerpt:text,priceBasis:'Free monthly plan'}]}});
+ expect(result.valuation?.usdEstimate).toBeCloseTo(118*1.2/9,4);
+ expect((result.valuation?.inputs as any).ruleIds).toContain('fx_reference_bound_to_fetched_ecb');
+});
+
 it('catalog model selection is tied to the actual free model and cannot combine other models prices',async()=>{
  const sourceUrl='https://docs.devin.ai/free',text='SWE-2 is available free with unlimited coding requests.';
  const base={platformId:'devin',type:'free',models:['SWE-2'],sourceText:text,sourceFetch:{originalUrl:sourceUrl,finalUrl:sourceUrl,fetchedUrl:sourceUrl,method:'direct' as const,sourceVerified:true,truncated:false,contentHash:await sha256(text)},evidence:{url:sourceUrl,tier:'official',capturedAt:date,excerpts:{benefit:text}}};
