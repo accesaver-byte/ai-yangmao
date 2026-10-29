@@ -42,7 +42,7 @@ import { reasonCodeForCategory, screeningMode } from '../shared/screening/types'
 import type { ScreeningRule } from '../shared/screening/types';
 import { classifyUrgency, systemDueAt } from '../shared/screening/urgency';
 import { ScreeningStore } from './screening/store';
-import { screeningIngestRoutes } from './screening/routes';
+import { screeningIngestRoutes, applyModelLead, trustedLeadModels } from './screening/routes';
 import { activeOnDate, isClaimable, liveStatus, missingEvidence } from '../shared/lifecycle';
 import { admin } from './admin';
 import { feishuAdmin, runScheduled } from './feishu';
@@ -642,6 +642,12 @@ ingest.post('/leads/:id/status', async c => {
   const identity=await aggregateIdentityLead(c.env.DB,lead.id,b.data.status==='reviewing');
   if(identity)return c.json({ok:true,identityHandled:true,...identity});
   if(lead.status!=='new')return c.json({error:'线索状态已变化，请使用线索复核结果接口'},409);
+  // 2026-10-29：未准入厂商的线索会留给人工发现平台；但固定筛选模型已判“不是 AI 羊毛”（≥0.9）时按同一守卫结案（农行返现、库库ai 网盘会员）。
+  if(b.data.status==='reviewing'&&b.data.note?.startsWith('白名单外的平台')){
+    const models=trustedLeadModels(c.env);
+    const verdict=models.length?await c.env.DB.prepare(`SELECT verdict,match_ref,confidence,explanation,model FROM screening_decisions WHERE item_id=? AND model IN (SELECT value FROM json_each(?)) ORDER BY created_at DESC LIMIT 1`).bind('lead:'+lead.id,JSON.stringify(models)).first<{verdict:string;match_ref:string|null;confidence:number;explanation:string;model:string}>():null;
+    if(verdict?.verdict==='not_a_perk'&&await applyModelLead(c.env.DB,lead.id,{verdict:verdict.verdict,matchId:verdict.match_ref,confidence:verdict.confidence,explanation:verdict.explanation??''},verdict.model))return c.json({ok:true,closedByScreening:true});
+  }
   const originOfferId=b.data.offerId;
   if(b.data.offerId)b.data.offerId=(await resolveCanonicalOffer(c.env.DB,b.data.offerId)).offerId;
   if (b.data.status === 'linked') {

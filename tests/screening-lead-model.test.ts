@@ -49,3 +49,32 @@ it('links a duplicate of a listed perk only when every stated amount is already 
   lead(9812, 'Vendor 福利来了'); expect(await post(9812, 'duplicate_published', { matchId: 'offer:vendor-reset' })).toBe(false);
   expect([9811, 9812].map(status)).toEqual(['new', 'new']);
 });
+
+const call = async (path: string, body: unknown, token: string, env: Record<string, string>) => {
+  const r = await worker.fetch(new Request(`https://local.test/api/${path}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+    { DB: f.db, INGEST_TOKEN: 'lead-model-ingest-01', ADMIN_TOKEN: 'lead-model-admin-0123456', SCREENING_MODE: 'shadow', ...env } as any, {} as any);
+  return { status: r.status, body: await r.json() as any };
+};
+// 2026-10-29 A: an unknown-vendor lead is kept for platform discovery unless a trusted model already said "not a perk".
+it('closes an unknown-vendor lead the trusted model judged not a perk instead of keeping it for review', async () => {
+  lead(9820, '农业银行Visa信用卡X AI/Cursor/OpenRouter/GitHub 支付返现10%');
+  expect(await post(9820, 'not_a_perk', { trusted: '' })).toBe(false);
+  const r = await call('ingest/leads/9820/status', { status: 'reviewing', note: '白名单外的平台：农业银行' }, 'lead-model-ingest-01', { SCREENING_LEAD_MODELS: MODEL });
+  expect(r.body).toMatchObject({ ok: true, closedByScreening: true });
+  expect(status(9820)).toBe('rejected');
+  lead(9821, 'Vendor 新用户送 5 美元');
+  await post(9821, 'not_a_perk', { trusted: '' });
+  await call('ingest/leads/9821/status', { status: 'reviewing', note: '白名单外的平台：Vendor' }, 'lead-model-ingest-01', { SCREENING_LEAD_MODELS: MODEL });
+  expect(status(9821)).toBe('reviewing');
+});
+// 2026-10-29 B: recorded verdicts on still-open leads are applied by a dry-run-first backfill.
+it('backfills recorded verdicts on open leads, dry run first', async () => {
+  lead(9830, '特斯拉 App 适配苹果折叠 iPhone'); lead(9831, 'Vendor 新用户送 5 美元');
+  await post(9830, 'not_a_perk', { trusted: '' }); await post(9831, 'not_a_perk', { trusted: '' });
+  const env = { SCREENING_LEAD_MODELS: MODEL };
+  const dry = await call('admin/screening/lead-verdicts/apply', {}, 'lead-model-admin-0123456', env);
+  expect(dry.body.results).toEqual([{ leadId: 9830, verdict: 'not_a_perk', confidence: 0.95, action: 'closed' }, { leadId: 9831, verdict: 'not_a_perk', confidence: 0.95, action: 'keep' }]);
+  expect(status(9830)).toBe('new');
+  await call('admin/screening/lead-verdicts/apply', { dryRun: false }, 'lead-model-admin-0123456', env);
+  expect([status(9830), status(9831)]).toEqual(['rejected', 'new']);
+});

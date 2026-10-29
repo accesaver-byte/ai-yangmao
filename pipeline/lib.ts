@@ -242,6 +242,13 @@ export function approvedTermsStillPresent(excerpts: Record<string, string | null
 }
 export const isFreebie = (s: string) => FREEBIE.test(s);
 export const isLead = (s: string) => LEAD.test(s);
+/**
+ * General news/community feeds (IT之家, media RSS, HN, Reddit): a bare 免费 ("11 月免费更新", "该应用免费") is not a perk.
+ * 免费 must sit next to a quota or usage word. Replayed 2026-09-29..10-29: drops 53 leads (52 later rejected, 1 already
+ * listed), loses no new perk. AIHOT keeps isLead: all five perks the strict rule would have lost came from it.
+ */
+export const STRICT_LEAD = new RegExp(LEAD.source.replace('|免费|', '|免费.{0,12}(额度|tokens?|积分|调用|使用|体验|试用|领|送|会员|plus|pro|api|credits?|次|天|月|年|开放|畅用|用|模型|版|档|层|tier)|(额度|tokens?|积分|调用|api|credits?|模型).{0,8}免费|'), LEAD.flags);
+export const isStrictLead = (s: string) => STRICT_LEAD.test(s);
 export const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 /** 只保留和羊毛相关的句子（前后各带一行上下文），用来算哈希和喂给模型：页面其他部分变了不会触发。 */

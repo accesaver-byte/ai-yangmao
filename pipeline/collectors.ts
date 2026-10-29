@@ -1,6 +1,6 @@
 // 各类信源的采集器。线索类（AIHOT / HN / Reddit）只产出线索，官方页面才会交给模型抽取成羊毛。
 import { XMLParser } from 'fast-xml-parser';
-import { BROWSER_UA, UA, fetchRetry, fetchText, isAiFreebieTopic, isLead, sleep } from './lib';
+import { BROWSER_UA, UA, fetchRetry, fetchText, isAiFreebieTopic, isLead, isStrictLead, sleep } from './lib';
 import type { LeadIn } from '../src/shared/ingest';
 import { xPostTime } from '../src/shared/lead-scope';
 import { officialStatusKey } from '../src/shared/dedupe';
@@ -77,7 +77,7 @@ export async function hn(src: Source): Promise<LeadIn[]> {
       const u = `https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=100&page=${page}&numericFilters=created_at_i>${since}&query=${encodeURIComponent(q)}`;
       const j = JSON.parse(await fetchText(u, { accept: 'application/json' })) as { hits: { objectID: string; title?: string; url?: string | null }[]; nbPages?: number };
       for (const h of j.hits) {
-        if (!h.title || !isLead(h.title)) continue;
+        if (!h.title || !isStrictLead(h.title)) continue;
         const url = h.url || `https://news.ycombinator.com/item?id=${h.objectID}`;
         out.set(url, { origin: 'hn', url, title: h.title.slice(0, 300), raw: `https://news.ycombinator.com/item?id=${h.objectID}` });
       }
@@ -131,7 +131,7 @@ async function redditApi(src: Source): Promise<LeadIn[]> {
   const r = await fetch(`https://oauth.reddit.com/r/${sub}/new?limit=50&raw_json=1`, { headers: { Authorization: `Bearer ${redditToken}`, 'User-Agent': UA } });
   if (!r.ok) throw new Error(`Reddit API HTTP ${r.status}`);
   const j = await r.json() as { data: { children: { data: { title: string; permalink: string; url?: string; selftext?: string } }[] } };
-  return j.data.children.map(c => c.data).filter(d => isLead(d.title))
+  return j.data.children.map(c => c.data).filter(d => isStrictLead(d.title))
     .map(d => ({ origin: 'reddit' as const, url: `https://www.reddit.com${d.permalink}`, title: d.title.slice(0, 300), raw: `${d.url ?? ''}\n${d.selftext ?? ''}`.slice(0, 4000) }));
 }
 async function redditOnce(src: Source): Promise<LeadIn[]> {
@@ -140,7 +140,7 @@ async function redditOnce(src: Source): Promise<LeadIn[]> {
   try { body = await fetchText(src.url, { accept: 'application/atom+xml' }); }
   catch (e) { if (!String(e).includes('429')) throw e; await sleep(60000); body = await fetchText(src.url, { accept: 'application/atom+xml' }); }
   const items = parseFeed(body);
-  return items.filter(i => i.link && isLead(i.title)).map(i => ({ origin: 'reddit' as const, url: i.link, title: i.title.slice(0, 300), raw: i.summary.slice(0, 4000) }));
+  return items.filter(i => i.link && isStrictLead(i.title)).map(i => ({ origin: 'reddit' as const, url: i.link, title: i.title.slice(0, 300), raw: i.summary.slice(0, 4000) }));
 }
 
 /** 第三方 RSS 线索（LINUX DO 福利羊毛、IT之家 等）。config.filter = "all" 整版都算线索；"ai" 只收 AI 相关且非中转站推广的帖子（综合福利版块用）；默认按线索关键词。 */
@@ -160,7 +160,7 @@ async function curlText(url: string, accept = 'application/rss+xml,application/x
 export async function feed(src: Source): Promise<LeadIn[]> {
   const cfg = (src.config ?? {}) as { origin?: LeadIn['origin']; filter?: 'all' | 'ai' | 'lead'; relay?: string };
   const items = parseFeed(cfg.relay === 'mac' ? await curlText(src.url) : await fetchText(src.url, { accept: 'application/rss+xml' }));
-  const keep = (i: FeedItem) => cfg.filter === 'all' ? true : cfg.filter === 'ai' ? isAiFreebieTopic(i.title) : isLead(`${i.title} ${i.summary.slice(0, 300)}`);
+  const keep = (i: FeedItem) => cfg.filter === 'all' ? true : cfg.filter === 'ai' ? isAiFreebieTopic(i.title) : isStrictLead(`${i.title} ${i.summary.slice(0, 300)}`);
   const leads = items
     .filter(i => i.link && keep(i))
     .map(i => ({ origin: cfg.origin ?? 'media', url: i.link, title: i.title.slice(0, 300), raw: i.summary.slice(0, 4000) }));

@@ -137,7 +137,7 @@ async function fromOfficialAccount(db: D1Database, url: string): Promise<boolean
   }
   return rows.some(r => { if (!r.site) return false; try { const s = new URL(r.site).hostname.replace(/^www\./, ''); return host === s || host.endsWith('.' + s); } catch { return false; } });
 }
-async function applyModelLead(db: D1Database, leadId: number, verdict: { verdict: string; matchId: string | null; confidence: number; explanation: string }, model: string): Promise<'closed' | 'linked' | null> {
+export async function applyModelLead(db: D1Database, leadId: number, verdict: { verdict: string; matchId: string | null; confidence: number; explanation: string }, model: string, dryRun = false): Promise<'closed' | 'linked' | null> {
   if (!Number.isInteger(leadId) || verdict.confidence < 0.9) return null;
   const lead = await db.prepare(`SELECT id, title, url, resolution FROM leads WHERE id=? AND status IN ('new','reviewing')`).bind(leadId).first<{ id: number; title: string | null; url: string; resolution: string | null }>();
   if (!lead || (lead.resolution && (JSON.parse(lead.resolution) as { identityTaskIds?: string[] }).identityTaskIds?.length)) return null;
@@ -146,6 +146,7 @@ async function applyModelLead(db: D1Database, leadId: number, verdict: { verdict
   const now = new Date().toISOString(), base = { attempts: 0, inconclusive: 0, checkedAt: now, nextAttemptAt: null, queries: [], candidates: [], screeningModel: model };
   if (verdict.verdict === 'not_a_perk') {
     if (LEAD_PERK_WORDS.test(title)) return null;
+    if (dryRun) return 'closed';
     const resolution = { ...base, status: 'closed', jobId: `screen-${leadId}`, reason: `入口筛选：模型判断不是 AI 羊毛（${verdict.explanation.slice(0, 300)}）` };
     const r = await db.prepare(`UPDATE leads SET status='rejected', resolution=? WHERE id=? AND status IN ('new','reviewing')`).bind(JSON.stringify(resolution), leadId).run();
     return r.meta.changes ? 'closed' : null;
@@ -158,6 +159,7 @@ async function applyModelLead(db: D1Database, leadId: number, verdict: { verdict
     // Every amount the lead states must already be in the listed perk (iFlytek "送1B" was a new round).
     const listedAmounts = leadAmounts(listed);
     if ([...leadAmounts(title)].some(a => !listedAmounts.has(a))) return null;
+    if (dryRun) return 'linked';
     const resolution = { ...base, status: 'linked', jobId: `screen-${leadId}`, reason: '入口筛选：模型判断与已上架活动相同', offerIds: [offerId], gate0: true };
     const r = await db.prepare(`UPDATE leads SET status='linked', offer_id=?, resolution=? WHERE id=? AND status IN ('new','reviewing')`).bind(offerId, JSON.stringify(resolution), leadId).run();
     return r.meta.changes ? 'linked' : null;
@@ -250,6 +252,23 @@ function taskSubject(row: QueueRow) {
 export const screeningAdminRoutes = new Hono<{ Bindings: Env; Variables: { role: 'admin' | 'reviewer'; who: string } }>();
 
 screeningAdminRoutes.get('/urgent', async c => c.json(await urgentReviewQueue(c.env.DB)));
+/** Shadow phase 2 backfill (admin 2026-10-29): leads opened before SCREENING_LEAD_MODELS took effect still carry their
+ * recorded verdicts. Apply the latest trusted verdict under the same guards; dry run by default, 20 leads per call. */
+screeningAdminRoutes.post('/lead-verdicts/apply', async c => {
+  if (c.get('role') !== 'admin') return c.json({ error: 'administrator required' }, 403);
+  const models = trustedLeadModels(c.env);
+  if (!models.length) return c.json({ error: 'SCREENING_LEAD_MODELS 未设置，线索判断仍为影子模式' }, 409);
+  const input = z.object({ dryRun: z.boolean().default(true), cursor: z.coerce.number().int().nonnegative().default(0) }).parse(await c.req.json().catch(() => ({})));
+  const rows = (await c.env.DB.prepare(`SELECT l.id, d.verdict, d.match_ref, d.confidence, d.explanation, d.model FROM leads l
+    JOIN screening_decisions d ON d.id=(SELECT d2.id FROM screening_decisions d2 WHERE d2.item_id='lead:'||l.id AND d2.model IN (SELECT value FROM json_each(?)) ORDER BY d2.created_at DESC LIMIT 1)
+    WHERE l.status IN ('new','reviewing') AND l.id>? ORDER BY l.id LIMIT 21`).bind(JSON.stringify(models), input.cursor).all<{ id: number; verdict: string; match_ref: string | null; confidence: number; explanation: string; model: string }>()).results;
+  const results = [];
+  for (const r of rows.slice(0, 20)) {
+    const action = await applyModelLead(c.env.DB, r.id, { verdict: r.verdict, matchId: r.match_ref, confidence: r.confidence, explanation: r.explanation ?? '' }, r.model, input.dryRun);
+    results.push({ leadId: r.id, verdict: r.verdict, confidence: r.confidence, action: action ?? 'keep' });
+  }
+  return c.json({ dryRun: input.dryRun, results, nextCursor: rows.length > 20 ? rows[19].id : null });
+});
 screeningAdminRoutes.post('/urgency', async c => {
   if (c.get('role') !== 'admin') return c.json({ error: '仅管理员可调整全局排序' }, 403);
   const input = z.object({ key: z.string().max(300).regex(/^(?:(?:offer|task):.+|lead:\d+)$/), expectedVersion: z.string().length(64), suppressed: z.boolean() }).safeParse(await c.req.json().catch(() => null));
