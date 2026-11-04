@@ -702,7 +702,7 @@ describe('admin platform catalog', () => {
 describe('public all-offers freshness', () => {
   it('loads newly published platforms without replacing selected filters', async () => {
     const calls:{url:string;init?:RequestInit}[]=[];
-    const raw={id:'new-free',platformId:'unisound',title:'新厂商限免',type:'free',modalities:['text'],claimMethod:'signup',requirements:['none'],audience:'all',valueText:'免费调用',claimEnd:'2026-10-31',endKind:'date',sourceTz:'Asia/Shanghai',lastVerifiedAt:new Date().toISOString(),discoveredAt:new Date().toISOString(),evidence:{tier:'site',url:'https://vendor.example',excerpts:{}}};
+    const raw={id:'new-free',platformId:'unisound',title:'新厂商限免',type:'free',modalities:['text'],claimMethod:'signup',requirements:['none'],audience:'all',valueText:'免费调用',claimEnd:new Date(Date.now()+30*864e5).toISOString().slice(0,10),endKind:'date',sourceTz:'Asia/Shanghai',lastVerifiedAt:new Date().toISOString(),discoveredAt:new Date().toISOString(),evidence:{tier:'site',url:'https://vendor.example',excerpts:{}}};
     const f=fixture((url,init)=>{calls.push({url,init});return url.startsWith('/api/platforms')?{platforms:[{id:'unisound',name:'云知声',type:'lab'}]}:url.startsWith('/api/offers')?{offers:[raw]}:url.startsWith('/api/meta')?{lastSuccessfulCollect:null}:{};});
     f.run("OFFERS=[];prepare();location.hash='#all';ALLF.m='text';pAll();");
     const filter=f.document.querySelector('#f-m');
