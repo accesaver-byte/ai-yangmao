@@ -10,6 +10,7 @@
 - 线索模型筛选窄放行（2026-10-28 管理员授权，影子第二阶段）：`SCREENING_LEAD_MODELS` 所列固定模型置信度 ≥0.9 时，仅两类生效——标题无福利词、非发布/上线新闻、非已登记官方账号的“不是 AI 羊毛”线索关闭；与已上架非重置/非周期条目相同、且线索所写金额都在该条目中的线索关联。周期与重置类一律不处理；其余判断仍为影子。全部进入「自动关闭抽查」可撤销。
 - 管理员「⚡ 快速上架」：担保的链接即登记为厂商官方地址，先免费模型、不行再 DeepSeek 兜底补字段（含现行目录的会员资格），完整字段校验失败由模型自动纠正重试，字段齐即上架，跳过筛查与审核闸门（仅管理员；详见 operations.md）。
 - AIHOT Codex reset 自 2026-10-18 起获管理员长期自动上架授权：使用 AIHOT 文本里的已登记 X 员工原帖链接作证据，查重后自动批准；2026-10-22 起是否为重置及日期以 AIHOT 事件的类型、状态（预告/确认）、时间与中文备注为准，原帖仍须读到以核对作者、ID 与时间；进度回复不另建，历史活动照常收录。专用开关仅限 `aihot-resets`，不扩展其他福利，不取消 GitHub Actions 环境审批。详见 [专项说明](docs/aihot-reset-auto-publish-2026-10-18.md)。
+- AIHOT Antigravity / Claude reset 自 2026-11-22 起获管理员同样的自动上架授权（“与 Codex reset 一样”）：信源仅限 `aihot-antigravity-resets`（@_mohansolo，平台 google）与 `aihot-claude-resets`（@ClaudeDevs、@lydiahallie，平台 anthropic），各自开关；须有 AIHOT 事件，不估值，Claude 重置卡以原帖截止日结束、目录外套餐保留审核。详见 [专项说明](docs/aihot-reset-antigravity-claude-2026-11-22.md)。
 - OpenRouter 官方账号的模型上线/Try it/卡片线索不得仅因正文未写赠金额度而拒绝：补读其官方落地页或模型 API，核实免费变体后补入既有共享免费层的 models；证据缺失保留待审。误关抽检须恢复原审核、保留历史并停止学习已纠正的负例。现行平台要点写 D1 画像；详见 [修复凭证](docs/openrouter-evidence-recovery-2026-10-18.md)。
 - 现行平台事实在 D1 `platform_profiles`。`pipeline/platform-notes.md` 已冻结为历史快照，不再覆盖现行规则。
 - 审核使用仓库 [.claude/skills/yangmao-review](.claude/skills/yangmao-review/SKILL.md)，不要以外部旧副本替代。
