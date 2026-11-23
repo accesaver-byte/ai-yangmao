@@ -1,5 +1,5 @@
 import {canonicalOfferMap} from './canonical';
-import type { LeadResolution } from '../../shared/lead-review';
+import { LEAD_TECHNICAL_RETRY_LIMIT,type LeadResolution } from '../../shared/lead-review';
 import { sha256,stableJson } from '../../shared/identity/normalize';
 import { MutationBuilder,commitIdentityMutation } from './commit';
 import { IdentityError } from './store';
@@ -25,7 +25,8 @@ export async function aggregateIdentityLead(db:D1Database,leadId:number,forceRev
  const incomplete=all.length>100||extractions.results.length>100||!all.length||extractions.results.some(e=>!e.extraction_complete||e.state==='deferred')||!!deferredIds.length;
  const identityPending=all.some(r=>r.task_id&&['identity','evidence_reopen','merge_conflict'].includes(r.kind??'')&&['open','checking','manual'].includes(r.task_state??''));
  const status=forceReview||incomplete||identityPending?'reviewing':offerIds.length?'linked':all.every(r=>r.state==='resolved_rejected')?'rejected':'reviewing';
- const retryNeeded=deferredIds.length>0||extractions.results.some(e=>!e.extraction_complete||e.state==='deferred');
+ // 复核领取时 attempts 已加一；身份任务接手的重试也受同一上限，否则线索每 20 分钟重跑一次模型（2026-11 #8446 等 50 余次）。
+ const retryNeeded=(deferredIds.length>0||extractions.results.some(e=>!e.extraction_complete||e.state==='deferred'))&&(JSON.parse(lead.resolution??'null')?.attempts??0)<LEAD_TECHNICAL_RETRY_LIMIT;
  const old:LeadResolution|null=lead.resolution?JSON.parse(lead.resolution):null;
  const basis={leadId,status,routing:[...routing.entries()],rows:all.map(r=>[r.id,r.revision,r.state,r.task_state]),extractions:extractions.results};
  const hash=await sha256(stableJson(basis)),request='lead-identity:'+leadId+':'+hash;
