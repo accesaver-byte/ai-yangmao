@@ -18,6 +18,8 @@ export async function aihot(src: Source): Promise<AiHotLead[]> {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const j = await res.json() as Record<string, unknown>;
   if (Array.isArray(j.events)) {
+    // 同一套 AIHOT 重置事件格式也用于 Antigravity（/api/v1/antigravity-resets，2026-11-22 加入）；产品名取信源 config.product。
+    const product = String((src.config as { product?: unknown } | null)?.product ?? 'Codex');
     // 只收最近 7 天的重置。每个事件一条线索，用最早的那条原帖（主公告）作地址：AIHOT 按新到旧排列，
     // 取第一条会拿到“2 小时内到账”“搞定收工”这类没有上下文的回复（2026-10-15 Day 10 重置因此被误判为旧轮次）。
     const since = Date.now() - 7 * 86400_000;
@@ -52,7 +54,7 @@ export async function aihot(src: Source): Promise<AiHotLead[]> {
         const when = main.at != null ? new Date(main.at).toISOString().slice(0, 16) + 'Z' : (e.occurredOn ?? e.createdAt ?? '');
         return [{
           origin: 'aihot' as const, url: main.url!,
-          title: `Codex ${e.displayLabel ?? ''}：${e.title ?? ''}（${e.occurredOn ?? when}）`.slice(0, 300),
+          title: `${product} ${e.displayLabel ?? ''}：${e.title ?? ''}（${e.occurredOn ?? when}）`.slice(0, 300),
           raw: [`事件时间：${when}`, ...posts.map(p => `${p.at != null ? new Date(p.at).toISOString() : ''} ${p.url}\n${postText(p)}`)].join('\n').slice(0, 4000),
           aihotEvent: e,
         }];

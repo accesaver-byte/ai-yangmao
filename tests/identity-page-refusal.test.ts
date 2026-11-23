@@ -1,6 +1,7 @@
-import { expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { auditFixture } from './fixtures/identity/audit';
 import { displayOffer } from './fixtures/identity/offer';
+afterEach(() => vi.useRealTimers());
 import { captureLocalSnapshot, buildBackfillPlan, applyBackfillPage } from '../scripts/identity/backfill';
 import { sha256 } from '../src/shared/identity/normalize';
 import { IdentityService } from '../src/worker/identity/service';
@@ -78,6 +79,8 @@ it('lists remembered refusals and undo puts the content back in review for good'
   } finally { f.sqlite.close(); }
 });
 it('reports a source re-read without new perks and lets the owner disable it with a reason', async () => {
+  // The fixture observes pages on 2026-10-10; noisy sources look back 30 days, so pin the clock inside that window.
+  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-20T12:00:00Z'));
   const { f, offer } = await setup(); try {
     f.sqlite.prepare("INSERT INTO sources(id,platform_id,kind,url,tier) VALUES('vendor-tutorial','vendor','web_list',?,'site')").run(tutorial);
     for (let i = 0; i < 5; i++) await read(f, offer, `Tutorial\n${oldQuote}\nComments: ${i}`, { sourceId: 'vendor-tutorial' });

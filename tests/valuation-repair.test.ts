@@ -21,6 +21,8 @@ it('uses the same provider once to extend a source-bound money quote, with exact
  expect(result.leadAssessment).toMatchObject({outcome:'unresolved',reason:'保持原线索待审'});expect(result.offers[0]).toMatchObject({platformId:'vendor',title:'新用户 API 赠额',usdEstimate:null,usdMax:null,excerpts:{benefit:text}});expect(result.offers[0]).not.toHaveProperty('sourceFetch');expect(result.offers[0]).not.toHaveProperty('sourceText');expect((await valueOf(result.offers[0])).valuation?.usdEstimate).toBe(12);
 });
 it('repairs strict catalog Fact structure without altering the activity or substituting a model amount',async()=>{
+ // Catalog prices are dated (30-day life); pin the clock inside their window so the test does not expire.
+ vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-20T12:00:00Z'));
  const sourceUrl='https://elevenlabs.io/free',body='Free plan: all registered accounts receive 10,000 credits monthly.';
  const recipe={kind:'credits',cadence:'month',benchmark:'entry_plan',entitlementUnits:{value:10000,sourceId:'benefit',quote:body},packageUnits:{catalogId:'elevenlabs-starter.packageUnits'},packagePrice:{catalogId:'elevenlabs-starter.amount',sourceId:'benefit',quote:body},sources:[source(body,sourceUrl)]};
  const corrected={...recipe,packagePrice:{catalogId:'elevenlabs-starter.amount'}};let modelCalls=0;

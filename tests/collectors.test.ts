@@ -113,3 +113,17 @@ describe('LINUX DO 首帖正文', () => {
     expect(text).not.toContain('回帖不要');
   });
 });
+
+// 2026-11-22: AIHOT's Antigravity reset feed shares the event format; the lead names the configured product.
+describe('AIHOT Antigravity 重置事件', () => {
+  it('uses the source product name in the lead title and keeps Codex as the default', async () => {
+    const event = { title: 'Antigravity 额度重置已完成', displayLabel: '额度重置', createdAt: new Date().toISOString(), posts: [{
+      url: 'https://x.com/_mohansolo/status/2123848516581892181', fullOriginalText: 'Reset everyone’s Gemini quota on Antigravity.' }] };
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ events: [event] })));
+    const [agy] = await aihot({ ...aihotSource('https://aihot.news/api/v1/antigravity-resets'), id: 'aihot-antigravity-resets', config: { product: 'Antigravity' } } as Source);
+    expect(agy.title).toMatch(/^Antigravity 额度重置：Antigravity 额度重置已完成/);
+    expect(agy.url).toBe('https://x.com/_mohansolo/status/2123848516581892181');
+    const [codex] = await aihot(aihotSource('https://aihot.news/api/v1/codex-resets'));
+    expect(codex.title).toMatch(/^Codex /);
+  });
+});
