@@ -204,5 +204,27 @@
     "context": []
    }
   ]
+ },
+ "grokNov10": {
+  "id": "reset-2119871982946971659-1-1",
+  "type": "direct_reset",
+  "status": "confirmed",
+  "title": "Grok Bot 额度重置已完成",
+  "createdAt": "2026-11-10T03:17:20.000+08:00",
+  "confirmedAt": "2026-11-10T03:17:20.000+08:00",
+  "scope": "",
+  "schedule": null,
+  "posts": [
+   {
+    "id": "2119871982946971659",
+    "url": "https://x.com/bot/status/2119871982946971659",
+    "stage": "确认完成",
+    "text": "我们已为所有 Grok Bot 用户重置了每周限额。",
+    "fullText": "我们已为所有 Grok Bot 用户重置了每周限额。\n\n尽情使用吧！",
+    "originalText": "We've reset weekly limits for all Grok Bot users.",
+    "fullOriginalText": "We've reset weekly limits for all Grok Bot users.\n\nEnjoy!",
+    "context": []
+   }
+  ]
  }
 }

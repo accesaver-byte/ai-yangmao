@@ -4,12 +4,13 @@ import {officialStatusKey} from './dedupe';
 import {xPostTime} from './lead-scope';
 import {offerIn,type OfferIn} from './ingest';
 import type {CanonicalTermsV1} from './identity/types';
-export type AiHotResetProduct='codex'|'antigravity'|'claude';
-/** One AIHOT reset feed the admin authorized for auto-publish: Codex 2026-10-18; Antigravity and Claude 2026-11-22. */
+export type AiHotResetProduct='codex'|'antigravity'|'claude'|'grok';
+/** One AIHOT reset feed the admin authorized for auto-publish: Codex 2026-10-18; Antigravity and Claude 2026-11-22; Grok Bot 2026-11-23. */
 export interface AiHotResetProfile {product:AiHotResetProduct;label:string;source:string;url:string;actor:string;extractionVersion:string;platformId:string;handles:readonly string[];authorizedOn:string}
 export const AIHOT_RESET_PROFILES:Record<AiHotResetProduct,AiHotResetProfile>={
  codex:{product:'codex',label:'Codex',source:'aihot-resets',url:'https://aihot.news/api/v1/codex-resets',actor:'policy:aihot-codex-reset-v1',extractionVersion:'aihot-codex-reset-v1',platformId:'openai',handles:['thsottiaux'],authorizedOn:'2026-10-18'},
  antigravity:{product:'antigravity',label:'Antigravity',source:'aihot-antigravity-resets',url:'https://aihot.news/api/v1/antigravity-resets',actor:'policy:aihot-antigravity-reset-v1',extractionVersion:'aihot-antigravity-reset-v1',platformId:'google',handles:['_mohansolo'],authorizedOn:'2026-11-22'},
+ grok:{product:'grok',label:'Grok Bot',source:'aihot-grok-resets',url:'https://aihot.news/api/v1/grok-bot-resets',actor:'policy:aihot-grok-reset-v1',extractionVersion:'aihot-grok-reset-v1',platformId:'xai',handles:['bot'],authorizedOn:'2026-11-23'},
  claude:{product:'claude',label:'Claude',source:'aihot-claude-resets',url:'https://aihot.news/api/v1/claude-resets',actor:'policy:aihot-claude-reset-v1',extractionVersion:'aihot-claude-reset-v1',platformId:'anthropic',handles:['claudedevs','lydiahallie'],authorizedOn:'2026-11-22'},
 };
 export const AIHOT_RESET_SOURCE=AIHOT_RESET_PROFILES.codex.source;
@@ -30,7 +31,7 @@ export const aiHotEventSchema=z.object({
   context:z.array(z.object({id:z.string().max(40).nullish(),author:z.string().max(80).nullish(),relation:z.string().max(20).nullish(),text:note,originalText:note})).max(10).nullish()})).min(1).max(30),
 });
 export type AiHotEvent=z.infer<typeof aiHotEventSchema>;
-export const aiHotResetInput=z.object({url:z.url(),sourceText:z.string().min(1).max(20000),sourceFetch:sourceFetchSchema,capturedAt:z.iso.datetime({offset:true}),aihotEvent:aiHotEventSchema.optional(),product:z.enum(['codex','antigravity','claude']).optional()}).strict();
+export const aiHotResetInput=z.object({url:z.url(),sourceText:z.string().min(1).max(20000),sourceFetch:sourceFetchSchema,capturedAt:z.iso.datetime({offset:true}),aihotEvent:aiHotEventSchema.optional(),product:z.enum(['codex','antigravity','claude','grok']).optional()}).strict();
 export type AiHotResetInput=z.infer<typeof aiHotResetInput>;
 const day=(date:Date)=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 // X 的 syndication 接口返回 HTML 实体（Day 23：「iCloud Main &amp; Calendar」），AIHOT 记录的是解码后的「&」；比较前先解码，否则实体里的字母会让原文比对失败。
@@ -119,7 +120,7 @@ export function readAiHotReset(input:AiHotResetInput):{offer:OfferIn;scope?:stri
  // Reading the English post alone is kept only for Codex candidates saved before AIHOT events (2026-10-22).
  if(!input.aihotEvent&&!codex)throw new AiHotResetReviewRequired('没有 AIHOT 事件判定，保留常规审核');
  const {banked,number,eventDay,landsBy,scope}=input.aihotEvent?readAiHotEvent(input.aihotEvent,id,body,profile):readStaffText(body,timestamp);
- if(banked&&profile.product==='antigravity')throw new AiHotResetReviewRequired('Antigravity 重置卡没有自动模板，保留常规审核');
+ if(banked&&(profile.product==='antigravity'||profile.product==='grok'))throw new AiHotResetReviewRequired(`${profile.label} 重置卡没有自动模板，保留常规审核`);
  // A Claude reset card stays usable until the date the post gives; without one the listing would never end.
  const useBy=banked&&profile.product==='claude'?useByDay(body,eventDay):null;
  if(banked&&profile.product==='claude'&&!useBy)throw new AiHotResetReviewRequired('Claude 重置卡未写明使用期限，保留常规审核');
@@ -147,6 +148,11 @@ export function readAiHotReset(input:AiHotResetInput):{offer:OfferIn;scope?:stri
   title:`Antigravity 使用额度重置（${monthDay(eventDay)}）`,
   valueText:'Varun Mohan 宣布一次 Antigravity 使用额度重置；具体适用账号与恢复后可用量以账号用量页面为准。',
   steps:['打开 Antigravity，在用量页面查看本轮重置后的额度。'],evidence:evidence('staff')}),...(scope?{scope}:{})};
+ // @bot is the Grok Bot account (X business label: SpaceX Super Intelligence), registered as an xAI official handle 2026-11-23.
+ if(profile.product==='grok')return {offer:offerIn.parse({id:offerId,...common,audience,
+  title:`Grok Bot 用量限额重置（${monthDay(eventDay)}）`,
+  valueText:'Grok Bot 官方宣布一次用量限额重置；具体适用账号与恢复后可用量以 Grok Bot 用量页面为准。',
+  steps:['打开 Grok Bot，查看本轮重置后的用量限额。'],evidence:evidence('official')}),...(scope?{scope}:{})};
  const who=author==='claudedevs'?'Claude 官方':'Anthropic 员工 Lydia Hallie';
  return {offer:offerIn.parse({id:offerId,...common,audience,
   title:useBy?`Claude 免费重置卡发放（${monthDay(useBy)}前使用）`:`Claude 用量限额重置（${monthDay(eventDay)}）`,

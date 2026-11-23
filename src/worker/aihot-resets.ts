@@ -58,7 +58,7 @@ export async function prepareAiHotReset(env:Env,raw:AiHotResetInput):Promise<Res
  const rule=PLAN_RULES[profile.product];
  const paid=/\bpaid\s+(?:accounts|users|subscribers|subscriptions)\b/i.test(input.sourceText);
  const planClauses=input.sourceText.split(/[.!?;\n]/).filter(clause=>new RegExp(`\\b(?:subscribers?|users?|accounts?|members?|plans?|only|for|${rule?.product??'Google'})\\b`,'i').test(clause)).join('\n');
- const named=rule?rule.named(planClauses):/\b(?:Google\s+)?AI\s+(?:Plus|Pro|Ultra)\b|\b(?:Plus|Pro|Ultra)\s+(?:users?|subscribers?|members?|plans?|tiers?)\b/i.test(planClauses)?['unmapped']:[];
+ const named=rule?rule.named(planClauses):/\bSuperGrok\b|\bX\s+Premium\b|\bPremium\+?\s+(?:users?|subscribers?)\b|\b(?:Google\s+)?AI\s+(?:Plus|Pro|Ultra)\b|\b(?:Plus|Pro|Ultra)\s+(?:users?|subscribers?|members?|plans?|tiers?)\b/i.test(planClauses)?['unmapped']:[];
  // "Only" restricts eligibility when its clause names who is eligible; "it only takes 15 mins" (Day 17) does not.
  const onlyAudience=/\bonly\b[^.!?;\n]*\b(?:users?|subscribers?|accounts?|members?|plans?|tiers?)\b|\b(?:users?|subscribers?|accounts?|members?|plans?|tiers?)\b[^.!?;\n]*\bonly\b/i.test(input.sourceText);
  if(/(?:selected|some|certain|eligible)\s+(?:accounts|users|subscribers)|(?:accounts|users|reset).{0,35}(?:except|excluding)/i.test(input.sourceText)||onlyAudience&&!paid&&!named.length)return {outcome:'manual',reason:'原帖含尚未结构化的资格限制'};
@@ -91,7 +91,7 @@ export async function prepareAiHotReset(env:Env,raw:AiHotResetInput):Promise<Res
 }
 export async function advanceAiHotReset(env:Env,candidateId:string):Promise<Result>{
  const manual=async(reason:string):Promise<Result>=>{await env.DB.prepare('UPDATE intake_candidates SET last_error=? WHERE id=?').bind('aihot-policy-manual:'+reason,candidateId).run();return {outcome:'manual',candidateId,reason};};
- const row=await env.DB.prepare("SELECT c.*,o.text,o.final_url,coalesce(f.provenance_json,o.fetch_provenance_json) provenance FROM intake_candidates c JOIN source_observations o ON o.id=c.observation_id LEFT JOIN source_observation_fetches f ON f.id=c.source_fetch_id WHERE c.id=? AND c.extraction_version IN ('aihot-codex-reset-v1','aihot-antigravity-reset-v1','aihot-claude-reset-v1')").bind(candidateId).first<any>();
+ const row=await env.DB.prepare("SELECT c.*,o.text,o.final_url,coalesce(f.provenance_json,o.fetch_provenance_json) provenance FROM intake_candidates c JOIN source_observations o ON o.id=c.observation_id LEFT JOIN source_observation_fetches f ON f.id=c.source_fetch_id WHERE c.id=? AND c.extraction_version IN ('aihot-codex-reset-v1','aihot-antigravity-reset-v1','aihot-claude-reset-v1','aihot-grok-reset-v1')").bind(candidateId).first<any>();
  const profile=row&&aiHotResetProfileForVersion(row.extraction_version);
  if(!row||!profile)throw new IdentityError(404,'没有此 AIHOT 重置候选');
  await requirePolicy(env,profile);
