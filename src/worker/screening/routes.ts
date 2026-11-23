@@ -356,6 +356,19 @@ screeningAdminRoutes.get('/coming-soon-review', async c => {
   return c.json({ offers: rows.results });
 });
 /** Sources re-read often without a new perk, for the owner to blacklist (admin only). */
+/** 每周准确率（2026-11-23 管理员批准）：自动结案量、被管理员撤销的比例、模型花费与每条上架成本。只读，不发送消息。 */
+screeningAdminRoutes.get('/weekly-metrics', async c => {
+  const db = c.env.DB, since = new Date(Date.now() - 7 * 86400_000).toISOString();
+  const auto = "(actor LIKE 'policy:%' OR actor LIKE 'pipeline%' OR actor LIKE 'system%')";
+  const decisions = await db.prepare(`SELECT CASE WHEN ${auto} THEN 'auto' ELSE 'admin' END who, action, count(*) n FROM review_decisions WHERE created_at>=? GROUP BY 1,2`).bind(since).all<{ who: string; action: string; n: number }>();
+  const spot = await db.prepare(`SELECT count(*) n FROM leads WHERE json_extract(resolution,'$.spotCheck.verdict')='wrong' AND coalesce(json_extract(resolution,'$.spotCheck.at'),json_extract(resolution,'$.spotCheck.checkedAt'),'')>=?`).bind(since).first<{ n: number }>();
+  const cost = await db.prepare(`SELECT coalesce(json_extract(stats,'$.provider'),'?') provider, count(*) calls, round(sum(cost_cny),2) cny FROM runs WHERE kind='model' AND started_at>=? GROUP BY 1`).bind(since).all<{ provider: string; calls: number; cny: number }>();
+  const published = await db.prepare(`SELECT count(*) n FROM offers WHERE review_state='approved' AND created_at>=?`).bind(since).first<{ n: number }>();
+  const n = (who: string, action: string) => decisions.results.find(r => r.who === who && r.action === action)?.n ?? 0;
+  const paid = cost.results.reduce((sum, r) => sum + (r.cny ?? 0), 0);
+  return c.json({ since, autoApproved: n('auto', 'approve'), autoRejected: n('auto', 'reject'), adminApproved: n('admin', 'approve'), adminRejected: n('admin', 'reject'), autoCloseReversed: spot?.n ?? 0,
+    published: published?.n ?? 0, modelCost: cost.results, costPerPublished: published?.n ? Math.round(paid / published.n * 100) / 100 : null });
+});
 screeningAdminRoutes.get('/noisy-sources', async c => c.json({ sources: await listNoisySources(c.env.DB, Math.min(90, Math.max(7, Number(c.req.query('days') ?? 30) || 30))) }));
 /** One-off: apply recorded trusted verdicts to cards opened before the switch. Dry run unless dryRun=false. */
 screeningAdminRoutes.post('/model-duplicates/apply', async c => {
