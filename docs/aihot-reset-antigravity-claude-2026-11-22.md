@@ -8,9 +8,10 @@
 | --- | --- | --- | --- | --- | --- |
 | Codex（2026-10-18） | `aihot-resets` | `/api/v1/codex-resets` | `openai` | @thsottiaux（staff） | `policy:aihot-codex-reset-v1` |
 | Antigravity | `aihot-antigravity-resets` | `/api/v1/antigravity-resets` | `google` | @_mohansolo（staff） | `policy:aihot-antigravity-reset-v1` |
+| Grok Bot（2026-11-23） | `aihot-grok-resets` | `/api/v1/grok-bot-resets` | `xai` | @bot（official，X 商业标签 SpaceX Super Intelligence） | `policy:aihot-grok-reset-v1` |
 | Claude | `aihot-claude-resets` | `/api/v1/claude-resets` | `anthropic` | @ClaudeDevs（official）、@lydiahallie（staff） | `policy:aihot-claude-reset-v1` |
 
-- 三个产品在 `src/shared/aihot-reset.ts` 的 `AIHOT_RESET_PROFILES` 各有一份配置；信源 ID、kind 和接口地址必须与配置完全一致才适用授权，各自的 `sources.auto_publish` 单独开关。授权不扩展到 `aihot-grok-bot-resets`、`aihot-items` 或一般福利。
+- 三个产品在 `src/shared/aihot-reset.ts` 的 `AIHOT_RESET_PROFILES` 各有一份配置；信源 ID、kind 和接口地址必须与配置完全一致才适用授权，各自的 `sources.auto_publish` 单独开关。授权不扩展到 `aihot-items` 或一般福利。Grok Bot 重置卡、写明 SuperGrok / X Premium 等付费资格的原帖保留审核。
 - 账号须同时登记在对应平台的 `x_handles` / `staff_handles`：Lydia Hallie 于 2026-11-22 登记为 Anthropic `staff_handles`。
 - 候选的抽取版本为 `aihot-<产品>-reset-v1`，续传按候选的版本找回所属产品，关掉某个产品的开关只停该产品。
 

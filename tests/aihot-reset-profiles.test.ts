@@ -21,8 +21,8 @@ async function finish(candidateId:string){let result:any;for(let i=0;i<12;i++){r
 const claudeCatalog=(extra:string[]=[])=>({products:[{id:'claude',name:'Claude',aliases:[],status:'verified',sourceUrl:'https://claude.com/pricing',verifiedAt:'2026-11-01',revision:1}],
  plans:['Claude Pro','Claude Max 5x','Claude Max 20x','Claude Team Standard','Claude Team Premium',...extra].map(name=>({id:name.toLowerCase().replaceAll(' ','-'),productId:'claude',name,aliases:[],billing:'paid',status:'verified',sourceUrl:'https://claude.com/pricing',verifiedAt:'2026-11-01',revision:1}))});
 beforeEach(()=>{f=identityDb();f.sqlite.exec(`
- INSERT INTO platforms(id,name,type,status,site,x_handles,staff_handles) VALUES('google','Google AI','lab','approved','https://ai.google.dev','["@GoogleAI"]','["@_mohansolo"]'),('anthropic','Anthropic','lab','approved','https://www.anthropic.com','["@ClaudeDevs"]','["@lydiahallie"]'),('openai','OpenAI','lab','approved','https://openai.com','[]','["@thsottiaux"]');
- INSERT INTO sources(id,kind,url,tier,enabled,auto_publish) VALUES('aihot-antigravity-resets','aihot','https://aihot.news/api/v1/antigravity-resets','lead',1,1),('aihot-claude-resets','aihot','https://aihot.news/api/v1/claude-resets','lead',1,1),('aihot-resets','aihot','https://aihot.news/api/v1/codex-resets','lead',1,1);`);});
+ INSERT INTO platforms(id,name,type,status,site,x_handles,staff_handles) VALUES('google','Google AI','lab','approved','https://ai.google.dev','["@GoogleAI"]','["@_mohansolo"]'),('anthropic','Anthropic','lab','approved','https://www.anthropic.com','["@ClaudeDevs"]','["@lydiahallie"]'),('openai','OpenAI','lab','approved','https://openai.com','[]','["@thsottiaux"]'),('xai','xAI','lab','approved','https://x.ai','["@grok","@xai","@bot"]','[]');
+ INSERT INTO sources(id,kind,url,tier,enabled,auto_publish) VALUES('aihot-antigravity-resets','aihot','https://aihot.news/api/v1/antigravity-resets','lead',1,1),('aihot-claude-resets','aihot','https://aihot.news/api/v1/claude-resets','lead',1,1),('aihot-resets','aihot','https://aihot.news/api/v1/codex-resets','lead',1,1),('aihot-grok-resets','aihot','https://aihot.news/api/v1/grok-bot-resets','lead',1,1);`);});
 afterEach(()=>f.sqlite.close());
 
 it('matches a profile only for the exact source id, kind and feed URL',()=>{
@@ -92,7 +92,7 @@ it('keeps each feed to its own registered accounts and switch',async()=>{
  await expect(prepareAiHotReset(env(),p)).rejects.toThrow('AIHOT Antigravity reset 自动上架未启用');
  await expect(pendingAiHotResets(env(),'antigravity')).rejects.toThrow();
  expect((await pendingAiHotResets(env(),'claude')).candidates).toEqual([]);
- expect(Object.values(AIHOT_RESET_PROFILES).map(p=>p.source)).toEqual(['aihot-resets','aihot-antigravity-resets','aihot-claude-resets']);
+ expect(Object.values(AIHOT_RESET_PROFILES).map(p=>p.source)).toEqual(['aihot-resets','aihot-antigravity-resets','aihot-grok-resets','aihot-claude-resets']);
 });
 it('resumes a candidate under the profile it was admitted with even after the switch for another feed is off',async()=>{
  const a=await prepareAiHotReset(env(),await input('claude',events.claudeAllSep02));
@@ -101,4 +101,14 @@ it('resumes a candidate under the profile it was admitted with even after the sw
  expect((await finish(a.candidateId!)).outcome).toBe('published');
  f.sqlite.exec("UPDATE sources SET auto_publish=0 WHERE id='aihot-claude-resets'");
  await expect(advanceAiHotReset(env(),a.candidateId!)).rejects.toThrow('AIHOT Claude reset 自动上架未启用');
+});
+it('publishes a Grok Bot reset from the official @bot account under xAI',async()=>{
+ const p=await input('grok',events.grokNov10);
+ expect(buildAiHotReset(p)).toMatchObject({id:'xai-aihot-grok-reset-2119871982946971659',platformId:'xai',sourceId:'aihot-grok-resets',title:'Grok Bot 用量限额重置（11 月 9 日）',claimStart:'2026-11-09',evidence:{tier:'official'}});
+ const paid={...p,sourceText:p.sourceText+'\nSuperGrok subscribers only.'};
+ paid.sourceFetch={...paid.sourceFetch,contentHash:await sha256(paid.sourceText),originalContentHash:await sha256(paid.sourceText)};
+ expect(await prepareAiHotReset(env(),paid)).toMatchObject({outcome:'manual'});
+ const done=await finish((await prepareAiHotReset(env(),p)).candidateId!);
+ expect(done.outcome).toBe('published');
+ expect(f.sqlite.prepare("SELECT actor FROM review_decisions WHERE action='approve'").get()).toEqual({actor:'policy:aihot-grok-reset-v1'});
 });
