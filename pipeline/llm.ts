@@ -209,7 +209,10 @@ function providers(): Provider[] {
 export const llmAvailable = () => providers().length > 0;
 // 每次采集是独立进程。额度/鉴权故障或连续网络故障后，本轮不再逐条重复撞同一个供应商。
 const unavailableProviders = new Set<string>();
-export const modelAvailable = (allowPaid = false) => providers().some(p => !unavailableProviders.has(p.name) && (!p.paid || allowPaid));
+// 免费模型 429 只是每分钟限流：冷却两分钟后恢复，不再整轮停用，否则本轮其后所有页面都直接走付费（2026-11 共 48 次）。
+const rateLimitedUntil = new Map<string, number>();
+const rateLimited = (name: string) => (rateLimitedUntil.get(name) ?? 0) > Date.now();
+export const modelAvailable = (allowPaid = false) => providers().some(p => !unavailableProviders.has(p.name) && !rateLimited(p.name) && (!p.paid || allowPaid));
 // 免费档有每分钟请求数限制：两次调用至少间隔 MIN_GAP 毫秒
 const MIN_GAP = Number(process.env.LLM_MIN_GAP_MS ?? 4500);
 let nextCall = 0;
@@ -383,10 +386,10 @@ export async function extract(platformName: string, url: string, text: string, l
   const {sources:valuationSources,prompt:valuationPrompt}=await valuationContext(opts.platformIds??[],opts.deadlineAt);
   const sys = valuationPrompt + identityPrompt + (opts.platformList ? base + TRIAGE + opts.platformList + known : base + same + known) + verification+leadInstruction + '\n主抽取的最外层必须是对象 {"offers":[完整活动对象]}；每项必须有key、title、valueText和其他活动字段，valuationFactors只能作为活动对象内的一个字段，不能把计算因子单独作为顶层或offers元素。线索复核仍须同时保留leadAssessment。后续若明确要求因子自纠，才改用repairs格式。';
   let lastErr: unknown;
-  const all = providers().filter(p => !unavailableProviders.has(p.name));
+  const all = providers().filter(p => !unavailableProviders.has(p.name) && !rateLimited(p.name));
   const free = all.filter(p => !p.paid), paid = all.filter(p => p.paid);
   const chain = opts.allowPaid ? [...free, ...paid] : free;
-  const omissionRechecks=new Set<string>();
+  const omissionRechecks=new Set<string>(),formatRetries=new Set<string>();let lastFinish='';
   let valuationRepairUsed=false;
   for (let providerIndex=0;providerIndex<chain.length;providerIndex++) {
     const p=chain[providerIndex];
@@ -416,7 +419,7 @@ export async function extract(platformName: string, url: string, text: string, l
           const status = (e as { httpStatus?: number }).httpStatus;
           if (reservation && status) await opts.budget!.settle(reservation, p.name, 0, 0);
           if (status && [401, 403, 404, 429].includes(status)) {
-            unavailableProviders.add(p.name);
+            if (status === 429 && !p.paid) rateLimitedUntil.set(p.name, Date.now() + 120_000); else unavailableProviders.add(p.name);
             log(`  ${p.name} 返回 ${status}，本轮冷却，下一轮再试`);
             throw e;
           }
@@ -430,7 +433,7 @@ export async function extract(platformName: string, url: string, text: string, l
           await new Promise(r => setTimeout(r, wait));
         }
       }
-      const { text: out } = res!;
+      const { text: out } = res!;lastFinish=String(res!.finishReason??'');
       log(`  ${p.name} 输出：finish=${res!.finishReason??'unknown'}，chars=${out.length}，tokens=${res!.tokens}`);
       let tokens=res!.tokens,costCny=res!.costCny??0;
       const evidence = opts.evidenceText ?? text;
@@ -491,6 +494,10 @@ export async function extract(platformName: string, url: string, text: string, l
       if (e instanceof BudgetExhaustedError || e instanceof BudgetLedgerError || e instanceof DeferError) throw e;
       if(e instanceof SuspectedOmissionError&&!omissionRechecks.has(p.name)){
         omissionRechecks.add(p.name);chain.splice(providerIndex+1,0,p);
+      }
+      // 最后一个免费模型格式不合格、下一步就是付费时，先带着校验意见原地重试一次：2026-11 约半数 DeepSeek 调用只是因免费模型格式错误。校验标准不变。
+      else if(e instanceof ModelOutputError&&!(e instanceof SuspectedOmissionError)&&!p.paid&&chain[providerIndex+1]?.paid===true&&!/^(?:length|max_tokens)$/i.test(lastFinish)&&!formatRetries.has(p.name)&&Date.now()<(opts.deadlineAt??Infinity)){
+        formatRetries.add(p.name);chain.splice(providerIndex+1,0,p);
       }
       lastErr = e; log(`  ${p.name} 失败，换下一个模型：${(e as Error).message.slice(0, 120)}`);
     }
