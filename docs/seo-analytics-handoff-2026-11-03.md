@@ -5,7 +5,7 @@
 ## 已有进度与证据时间
 
 - 2026-11-03 核对：本地有尚未提交的 SEO、统计及其他功能改动；本地统计配置为 `ANALYTICS_MODE=off`，测量 ID 为 `G-YG8WGWKPRL`。
-- 同日读取主仓库 `main`（`cddab47666899c2b55053afa0a19c8dd4c7a027e`）的 `wrangler.jsonc`：尚无上述统计变量，静态资源仍使用 SPA 回退配置。仓库状态不等同于生产部署状态，本次未重新验收线上。
+- 同日读取主仓库 `main`（`cddab47666899c2b55053afa0a19c8dd4c7a027e`）的 `wrangler.jsonc`：尚无上述统计变量，静态资源仍使用 SPA 回退配置。仓库状态不等同于生产部署状态，本次未重新验收线上。 2026-11-23 复核线上：`/robots.txt` 与 `/sitemap.xml` 仍返回首页 HTML，首页无 canonical 与 GA4；实现 PR 提交前须对最新 `main` 再核一次。
 - 2026-10-22 本地交付记录：已实现公开页服务端正文、独立 URL、canonical、robots、Sitemap、状态码与 Google/Baidu 一致正文，并完成本地检查；统计实现可本地预览。代码仍需整理为独立 PR，与最新主分支整合后重新验证，不能让同事只配置 ID 就认为代码已上线。
 - 2026-10-22 GA4 创建记录：已有「AI 羊毛牧场官网」Web 数据流，网址为 `https://ai-yangmao.com`，测量 ID 为 `G-YG8WGWKPRL`，增强型衡量关闭。当时未收到数据，本次未重新登录核验后台。
 - 2026-10-23 站长配置记录：Google 网域资源进入 DNS 验证步骤，尚未验证成功；当时登录的 Cloudflare 账户没有显示目标域名；百度停在登录页。此后是否有人完成操作，待双方回复确认。
@@ -30,6 +30,11 @@
 | 已有搜索站点 | 是否已开通 Google Search Console / 百度站长，谁维护 | 确定复用已有资源，或由我方建立；无需在公开 PR 留私人登录邮箱 |
 | 官网发布 | 谁负责 Cloudflare Worker 发布，采用什么发布流程 | 确认发布人及评审、回滚方式；本阶段不执行发布 |
 | 验证配合 | 收到我方确认过的记录后，由谁添加 | 只新增所需记录，保留既有解析；回复添加时间、类型、主机记录即可 |
+
+**站长回复（2026-11-23）**
+
+- DNS 管理：ai-yangmao.com 托管在站长本人的 Cloudflare 账户（即本仓库 `wrangler deploy` 使用的账户，`wrangler.jsonc` 以 custom domain 绑定 Worker）。2026-10-23 看不到域名，是因为登录的是另一个 Cloudflare 账户。TXT 验证记录由站长添加，或由站长把协作者加为该账户成员后添加；不要另建站点或更换名称服务器。
+- 官网发布：发布负责人为站长。PR 经 CI 通过、由站长合并到 `main` 后，站长运行 `npm run build:web && npx wrangler deploy --keep-vars --tag <提交>`；回滚用 `wrangler rollback`。采集任务另需 GitHub Actions `production` 环境审批。详见 [运维说明](operations.md)。
 
 ### 同事可直接复制的回复模板
 

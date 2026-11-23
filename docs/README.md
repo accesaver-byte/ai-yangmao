@@ -51,6 +51,7 @@
 - [OpenRouter 官方模型证据与审核恢复](openrouter-evidence-recovery-2026-10-18.md)：官方短帖补证、误关恢复、负面学习纠正与平台要点。
 
 - [AIHOT Codex reset 自动上架](aihot-reset-auto-publish-2026-10-18.md)：管理员授权范围、员工原帖证据、持久续传及发布凭证；2026-10-22 起以 AIHOT 事件与中文备注判定。
+- [SEO、搜索平台与统计分工交接](seo-analytics-handoff-2026-11-03.md)：Google / 百度验证、DNS 与发布负责人、SEO / GA4 实现与上线顺序（尚未实现）。
 - [AIHOT Antigravity / Claude / Grok Bot reset 自动上架](aihot-reset-antigravity-claude-2026-11-22.md)：2026-11-22/23 授权沿用 Codex 流程，记录各产品信源、登记账号、署名与差异。
 - [首屏加载修复与本地验收](first-load-audit-2026-10-17.md)：预取复用、可选数据独立补齐、图表失败降级及验证边界。
 
