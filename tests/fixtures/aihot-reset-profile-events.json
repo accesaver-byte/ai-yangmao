@@ -1,0 +1,208 @@
+{
+ "antigravityNov21": {
+  "id": "reset-2123848516581892181-1-1",
+  "type": "direct_reset",
+  "status": "confirmed",
+  "title": "Antigravity 额度重置已完成",
+  "createdAt": "2026-11-21T02:38:40.000+08:00",
+  "confirmedAt": "2026-11-21T17:18:53.000+08:00",
+  "scope": "",
+  "schedule": null,
+  "posts": [
+   {
+    "id": "2124070033534161407",
+    "url": "https://x.com/_mohansolo/status/2124070033534161407",
+    "stage": "确认完成",
+    "text": "重置所有人在 Antigravity 上的 Gemini 额度。",
+    "fullText": "重置所有人在 Antigravity 上的 Gemini 额度。\n\n缓存改进使你在额度内能完成的工作量增加了 22%。周末用 Neon 构建愉快！",
+    "originalText": "Reset everyone’s Gemini quota on Antigravity.",
+    "fullOriginalText": "Reset everyone’s Gemini quota on Antigravity.\n\nThe caching improvements have increased the amount you can get done in quota by 22%. Enjoy building with Neon over the weekend!",
+    "context": []
+   },
+   {
+    "id": "2123928765860639107",
+    "url": "https://x.com/_mohansolo/status/2123928765860639107",
+    "stage": "补充说明",
+    "text": "重置会发生的！正在做一次大规模集群迁移，这需要一些时间 🙂",
+    "fullText": "@LingoTheVaas 重置会发生的！正在做一次大规模集群迁移，这需要一些时间 🙂",
+    "originalText": "Rest will happen! Doing a large cluster migration which takes some time 🙂",
+    "fullOriginalText": "@LingoTheVaas Rest will happen! Doing a large cluster migration which takes some time 🙂",
+    "context": [
+     {
+      "id": "2123928292088529291",
+      "author": "LingoTheVaas",
+      "relation": "reply",
+      "text": "@_mohansolo 我们在等重置啊 Varun 🧐😝",
+      "originalText": "@_mohansolo We waiting for reset Varun 🧐😝",
+      "url": "https://x.com/i/status/2123928292088529291"
+     },
+     {
+      "id": "2123928008214135241",
+      "author": "_mohansolo",
+      "relation": "reply",
+      "text": "很好的生活质量改进，我一直在用。这应该有助于了解长任务执行期间发生了什么。\n\n我们很快会有更多帮助提升可见性的东西 👀",
+      "originalText": "Nice quality of live improvement that I use all the time. This should help with visibility into what’s happening during a long task.\n\nWe’ll have even more to help with visibility soon 👀",
+      "url": "https://x.com/i/status/2123928008214135241"
+     }
+    ]
+   },
+   {
+    "id": "2123848516581892181",
+    "url": "https://x.com/_mohansolo/status/2123848516581892181",
+    "stage": "预告",
+    "text": "等它完成后，我会发放一次重置，因为它消耗额度的速度变快了！",
+    "fullText": "我们正在对 Antigravity 上的 Neon 推出一项改动，通过大幅增加缓存池大小，把缓存命中率提高约 4%。这至少能让你在额度内完成的工作量提升 20%。\n\n等它完成后，我会发放一次重置，因为它消耗额度的速度变快了！",
+    "originalText": "Will issue a reset after it’s done since it burned quota faster!",
+    "fullOriginalText": "We’re rolling out a change to increase cache hit rate on Neon by around 4% on Antigravity by massive increasing the cache pool size. This will increase what you can get done in quota by at least 20%.\n\nWill issue a reset after it’s done since it burned quota faster!",
+    "context": []
+   }
+  ]
+ },
+ "antigravityNov17": {
+  "id": "reset-2122836883877347836-1-1",
+  "type": "direct_reset",
+  "status": "confirmed",
+  "title": "Antigravity 额度重置已完成",
+  "createdAt": "2026-11-18T07:38:48.000+08:00",
+  "confirmedAt": "2026-11-18T07:38:48.000+08:00",
+  "scope": "",
+  "schedule": null,
+  "posts": [
+   {
+    "id": "2122836883877347836",
+    "url": "https://x.com/_mohansolo/status/2122836883877347836",
+    "stage": "确认完成",
+    "text": "为庆祝 Antigravity 一周年，我们正在为所有人重置所有模型的额度！",
+    "fullText": "还有一件事……\n\n为庆祝 Antigravity 一周年，我们正在为所有人重置所有模型的额度！",
+    "originalText": "In honor of Antigravity turning 1, we’re resetting quota for everyone across all models!",
+    "fullOriginalText": "One more thing…\n\nIn honor of Antigravity turning 1, we’re resetting quota for everyone across all models!",
+    "context": []
+   }
+  ]
+ },
+ "claudeNov11": {
+  "id": "banked-2120275296637321476-1-1",
+  "type": "reset_credit",
+  "status": "confirmed",
+  "title": "重置卡已发放",
+  "createdAt": "2026-11-11T05:59:58.000+08:00",
+  "confirmedAt": "2026-11-11T05:59:58.000+08:00",
+  "scope": "Pro、Max、Ultra、Team",
+  "schedule": {
+   "precision": "window",
+   "from": "2026-11-11T06:00:00.000+08:00",
+   "through": "2026-11-11T07:00:00.000+08:00",
+   "label": "北京时间预计 11月11日 06:00–07:00"
+  },
+  "posts": [
+   {
+    "id": "2120275296637321476",
+    "url": "https://x.com/claudedevs/status/2120275296637321476",
+    "stage": "确认发卡",
+    "text": "我们已为所有 Pro、Max、Ultra 和 Team 用户提供了一次免费的全额重置，覆盖所有模型和限额。",
+    "fullText": "我们已为所有 Pro、Max、Ultra 和 Team 用户提供了一次免费的全额重置，覆盖所有模型和限额。你可以在太平洋时间 12 月 10 日下午 2:00 之前的任意时间使用。\n\n我们最近修复了几个小问题：它们消耗的限额超过了应消耗的量；此外，对于已经用完全部模型每周限额的用户来说，Fable 重置并没有起多大作用。虽然这些问题并非影响所有人，但我们希望弥补由此带来的麻烦。\n\n你可以在 Settings > Usage 中找到它，或访问 http://clau.de/reset。",
+    "originalText": "We've given all Pro, Max, Ultra, and Team users one free full reset, across all models and limits.",
+    "fullOriginalText": "We've given all Pro, Max, Ultra, and Team users one free full reset, across all models and limits. Use it anytime before December 10 at 2:00PM PT.\n\nWe recently fixed a few small issues that used more limits than intended, and the Fable resets didn't do much for those of you who'd already hit your weekly limits for all models. While these issues didn't affect everyone, we want to make up for the trouble.\n\nYou'll find it in Settings > Usage, or at http://clau.de/reset.",
+    "context": []
+   }
+  ]
+ },
+ "claudeMaxSep05": {
+  "id": "reset-2095967323412930677-1-1",
+  "type": "direct_reset",
+  "status": "confirmed",
+  "title": "Claude 额度重置已完成",
+  "createdAt": "2026-09-05T04:08:45.000+08:00",
+  "confirmedAt": "2026-09-05T04:08:45.000+08:00",
+  "scope": "Max",
+  "schedule": null,
+  "posts": [
+   {
+    "id": "2095967323412930677",
+    "url": "https://x.com/lydiahallie/status/2095967323412930677",
+    "stage": "确认完成",
+    "text": "我们刚刚重置了所有 Claude Max 套餐用户的每周限额。",
+    "fullText": null,
+    "originalText": "We've just reset weekly limits for everyone on a Claude Max plan.",
+    "fullOriginalText": null,
+    "context": []
+   }
+  ]
+ },
+ "claudeAllSep02": {
+  "id": "reset-2094856679250919746-1-1",
+  "type": "direct_reset",
+  "status": "confirmed",
+  "title": "Claude 额度重置已完成",
+  "createdAt": "2026-09-02T02:35:27.000+08:00",
+  "confirmedAt": "2026-09-02T02:35:27.000+08:00",
+  "scope": "",
+  "schedule": null,
+  "posts": [
+   {
+    "id": "2094856679250919746",
+    "url": "https://x.com/claudedevs/status/2094856679250919746",
+    "stage": "确认完成",
+    "text": "随着 Fable 5.1 今天发布，我们同时也为所有用户重置了 5 小时和每周的用量限额。",
+    "fullText": null,
+    "originalText": "With Fable 5.1 out today, we've also reset 5-hour and weekly limits for all users.",
+    "fullOriginalText": null,
+    "context": []
+   }
+  ]
+ },
+ "claudeAffectedJun19": {
+  "id": "reset-2067802163498352929-1-1",
+  "type": "direct_reset",
+  "status": "confirmed",
+  "title": "Claude 额度重置已完成",
+  "createdAt": "2026-06-19T10:50:28.000+08:00",
+  "confirmedAt": "2026-06-19T10:50:28.000+08:00",
+  "scope": "Pro、Max",
+  "schedule": null,
+  "posts": [
+   {
+    "id": "2067802163498352929",
+    "url": "https://x.com/claudedevs/status/2067802163498352929",
+    "stage": "确认完成",
+    "text": "该问题已修复，我们正在为所有受影响的用户重置 5 小时和每周用量限额。",
+    "fullText": null,
+    "originalText": "This is fixed, and we're resetting 5-hour and weekly limits for everyone affected.",
+    "fullOriginalText": null,
+    "context": []
+   }
+  ]
+ },
+ "claudeNoDeadlineSep23": {
+  "id": "banked-2102438800836489554-1-1",
+  "type": "reset_credit",
+  "status": "confirmed",
+  "title": "重置卡已发放",
+  "createdAt": "2026-09-23T00:44:06.000+08:00",
+  "confirmedAt": "2026-09-23T00:44:06.000+08:00",
+  "scope": "Pro、Max、Team",
+  "schedule": null,
+  "posts": [
+   {
+    "id": "2102438803013333469",
+    "url": "https://x.com/claudedevs/status/2102438803013333469",
+    "stage": "确认发卡",
+    "text": "如果你是 Pro、Max 或 Team 用户，你的重置卡今天就可以在 Settings → Usage 中领取使用。",
+    "fullText": null,
+    "originalText": "If you're on Pro, Max, or Team, your reset is available today in Settings → Usage.",
+    "fullOriginalText": null,
+    "context": []
+   },
+   {
+    "id": "2102438800836489554",
+    "url": "https://x.com/claudedevs/status/2102438800836489554",
+    "stage": "确认发卡",
+    "text": "Pro、Max 和 Team 用户可获得一次可随时使用的重置",
+    "fullText": null,
+    "originalText": "Pro, Max, and Team users get a reset to use anytime",
+    "fullOriginalText": null,
+    "context": []
+   }
+  ]
+ }
+}

@@ -64,3 +64,21 @@ it('falls back to the employee post when AIHOT\'s event cannot be read',async()=
  expect((vi.mocked(api).mock.calls.find(c=>c[0]==='/aihot-resets')![1] as any).aihotEvent).toBeUndefined();
  expect(messages.flat().join(' ')).toContain('改读员工原帖');
 });
+const profileEvents=JSON.parse(readFileSync(new URL('./fixtures/aihot-reset-profile-events.json',import.meta.url),'utf8'));
+it('publishes the Antigravity feed under its own product and resume queue',async()=>{
+ const link='https://x.com/_mohansolo/status/2122836883877347836';
+ vi.mocked(fetchPage).mockResolvedValueOnce({...await fetchPage(url),originalUrl:link,finalUrl:link,fetchedUrl:'https://cdn.syndication.twimg.com/tweet-result?id=2122836883877347836&lang=en&token=0',text:'@_mohansolo\n2026-11-17T23:38:48.000Z\nOne more thing…\n\nIn honor of Antigravity turning 1, we’re resetting quota for everyone across all models!'});
+ vi.mocked(api).mockImplementation(async path=>path.startsWith('/aihot-resets/pending')?{candidates:[]}:responses.shift() as any);
+ responses=[{outcome:'published',candidateId:'c1',offerId:'o1'}];
+ const antigravity={id:'aihot-antigravity-resets',kind:'aihot',url:'https://aihot.news/api/v1/antigravity-resets',autoPublish:true} as Source;
+ expect(await publishAiHotResets(antigravity,[{origin:'aihot',url:link,aihotEvent:profileEvents.antigravityNov17}],{dry:false,log:()=>{}})).toMatchObject({published:1,failed:0});
+ expect(vi.mocked(api).mock.calls.map(c=>c[0])).toEqual(['/aihot-resets/pending?product=antigravity','/aihot-resets']);
+ expect((vi.mocked(api).mock.calls[1][1] as any).product).toBe('antigravity');
+ await publishAiHotResets({...antigravity,url:'https://aihot.news/api/v1/codex-resets'},[{origin:'aihot',url:link}],{dry:false,log:()=>{}});
+ expect(api).toHaveBeenCalledTimes(2);
+});
+it('keeps Codex requests in their original shape',async()=>{
+ responses=[{outcome:'published',candidateId:'c1',offerId:'o1'}];
+ await publishAiHotResets(source,[lead],{dry:false,log:()=>{}});
+ expect(vi.mocked(api).mock.calls[0][0]).toBe('/aihot-resets/pending');expect('product' in (vi.mocked(api).mock.calls[1][1] as any)).toBe(false);
+});
