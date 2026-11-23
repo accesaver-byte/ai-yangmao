@@ -395,6 +395,8 @@ export async function extract(platformName: string, url: string, text: string, l
       let res: Awaited<ReturnType<Provider['call']>> | null = null;
       for (let i = 0; i < 3 && !res; i++) {
         if (Date.now() >= (opts.deadlineAt ?? Infinity)) throw new DeferError('本轮即将结束，留到下一轮抽取');
+        // 付费调用剩不到两分钟就不开始，避免花了钱结果却因运行结束被丢弃。
+        if (p.paid && (opts.deadlineAt ?? Infinity) - Date.now() < 120_000) throw new DeferError('本轮即将结束，不再发起付费调用');
         const reservation = opts.budget ? await opts.budget.reserve(p.name, currentSystem, user, p.price) : null;
         try {
           await pace();

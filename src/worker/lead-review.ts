@@ -24,7 +24,9 @@ leadReviewRoutes.get('/queue',async c=>{
     .sort((a,b)=>{const ua=urgency.get(a.id),ub=urgency.get(b.id);return (ua&&ub?urgentFirst(ua,ub):0)||leadPriority(a)-leadPriority(b)||(a.resolution?.attempts??0)-(b.resolution?.attempts??0)||a.id-b.id;});
   const selected=rows.slice(0,limit);
   if(limit>=4&&rows.length>limit){const oldest=[...rows].sort((a,b)=>a.id-b.id)[0];if(!selected.includes(oldest))selected[limit-1]=oldest;}
-  return c.json({jobs:selected.map(l=>({id:l.id,title:l.title})),remaining:rows.length});
+  // 付费兜底只给 P0/P1 紧急线索；普通受阻线索只用免费模型（2026-11 受阻复核花掉当月预算的 58%）。
+  const urgent=(id:number)=>{const u=urgency.get(id);return !!u&&!u.suppressed&&!u.expired&&(u.tier==='P0'||u.tier==='P1');};
+  return c.json({jobs:selected.map(l=>({id:l.id,title:l.title,urgent:urgent(l.id)})),remaining:rows.length});
 });
 leadReviewRoutes.post('/:id/claim',async c=>{
   const d=db(c.env),[l]=await d.select().from(s.leads).where(eq(s.leads.id,Number(c.req.param('id'))));

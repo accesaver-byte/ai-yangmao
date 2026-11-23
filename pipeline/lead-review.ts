@@ -22,7 +22,7 @@ export interface LeadReviewOptions {limit:number;ids?:number[];deadlineAt:number
 export async function runLeadReviews(options:LeadReviewOptions){
   const stats={checked:0,linked:0,closed:0,retry:0,manual:0,deferred:0};
   if(options.dry||options.limit<=0)return stats;
-  const {jobs}=await api<{jobs:{id:number}[]}>(`/lead-reviews/queue?limit=${options.limit}${options.ids?.length?'&ids='+options.ids.join(','):''}`);
+  const {jobs}=await api<{jobs:{id:number;urgent?:boolean}[]}>(`/lead-reviews/queue?limit=${options.limit}${options.ids?.length?'&ids='+options.ids.join(','):''}`);
   let searchPaused=false;
   for(const [index,q] of jobs.entries()){
     if(!options.canContinue()||!modelAvailable(options.allowPaid)||Date.now()>=options.deadlineAt){stats.deferred+=jobs.length-index;break;}
@@ -85,7 +85,7 @@ export async function runLeadReviews(options:LeadReviewOptions){
             hasLinkedEvidence=true;
             if(!urls.some(u=>normUrl(u)===normUrl(linked))){urls.push(linked);ordered.push(linked);}
           }
-          const result=await extract(owner.name,page.finalUrl,page.text.slice(0,22000),options.log,{allowPaid:options.allowPaid,deadlineAt,budget:modelBudget,
+          const result=await extract(owner.name,page.finalUrl,page.text.slice(0,22000),options.log,{allowPaid:options.allowPaid&&q.urgent===true,deadlineAt,budget:modelBudget,
             evidenceText:page.text,platformIds:[owner.id],platformList:platforms.map(p=>p.id+'='+p.name).join('；'),existing:job.existing.filter(o=>o.platformId===owner.id).map(existingLine).join('\n'),corrections,leadTarget:JSON.stringify({title:lead.title,originUrl:lead.url,summary:targetText.slice(0,2500)})});
           options.account(result.tokens,result.costCny);
           if(result.offers.length){

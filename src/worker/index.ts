@@ -751,6 +751,8 @@ ingest.post('/model-budget/reserve', async c => {
   const nowIso = new Date().toISOString(), today = nowIso.slice(0, 10), month = nowIso.slice(0, 7);
   const stats = JSON.stringify({ state: 'reserved', provider: body.data.provider, line, pool: body.data.pool ?? null, purpose: body.data.purpose ?? null });
   const nonUrgentCap = Math.max(0, freeDaily - urgentReserve);
+  // 模型调用最长 90 秒；一小时仍未结算的预留来自被中断的运行，不再占用额度（2026-11 有 ¥9 因此虚耗）。
+  await c.env.DB.prepare(`UPDATE runs SET tokens=0,cost_cny=0,stats=json_set(stats,'$.state','expired') WHERE kind='model' AND json_extract(stats,'$.state')='reserved' AND started_at<?`).bind(new Date(Date.now()-3600_000).toISOString()).run();
   // 一条 INSERT ... WHERE 同时判定与占用余额，多个并发采集任务也不能越过上限。
   const reserved = await c.env.DB.prepare(`INSERT INTO runs (kind,started_at,finished_at,ok,stats,tokens,cost_cny)
     SELECT 'model', ?1, ?1, 0, ?2, ?3, ?4
