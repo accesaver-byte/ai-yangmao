@@ -2278,10 +2278,13 @@ async function admScreening() {
     <details data-intake-rules><summary>入口关键词规则</summary><div data-intake-body>展开后读取…</div></details>
     <details data-spot-check><summary>自动关闭抽查</summary><div data-spot-body>展开后读取…</div></details>
     <details data-noisy><summary>噪声信源</summary><div data-noisy-body>展开后读取…</div></details>
+    <details data-weekly><summary>本周准确率</summary><div data-weekly-body>展开后读取…</div></details>
     <details data-soon><summary>预告待确认</summary><div data-soon-body>展开后读取…</div></details>`;
   const rules=box.querySelector('[data-intake-rules]'),spot=box.querySelector('[data-spot-check]'),noisy=box.querySelector('[data-noisy]');
   const soon=box.querySelector('[data-soon]');
   soon.addEventListener('toggle',()=>{if(soon.open&&!soon.dataset.loaded){soon.dataset.loaded='1';loadComingSoonReview(soon.querySelector('[data-soon-body]'));}});
+  const weekly=box.querySelector('[data-weekly]');
+  weekly.addEventListener('toggle',()=>{if(weekly.open&&!weekly.dataset.loaded){weekly.dataset.loaded='1';loadWeeklyMetrics(weekly.querySelector('[data-weekly-body]'));}});
   noisy.addEventListener('toggle',()=>{if(noisy.open&&!noisy.dataset.loaded){noisy.dataset.loaded='1';loadNoisySources(noisy.querySelector('[data-noisy-body]'));}});
   rules.addEventListener('toggle',()=>{if(rules.open&&!rules.dataset.loaded){rules.dataset.loaded='1';loadIntakeRules(rules.querySelector('[data-intake-body]'));}});
   spot.addEventListener('toggle',()=>{if(spot.open&&!spot.dataset.loaded){spot.dataset.loaded='1';loadSpotCheck(spot.querySelector('[data-spot-body]'));}});
@@ -2525,6 +2528,15 @@ async function loadComingSoonReview(body) {
   let data; try { data = await adm('/screening/coming-soon-review'); } catch (e) { body.textContent = '读取失败：' + e.message; return; }
   body.className = 'small';
   body.innerHTML = `<p class="muted">官方预告了、但没写开放时间的福利，公布 14 天后仍未确认开放。打开条目核对：已开放就在线编辑去掉预告，未开放或取消就撤下。</p>${data.offers.map(o => `<p><a href="#offer-${esc(o.id)}">${esc(o.title)}</a> <span class="muted">${esc(o.platformId)} · 公布于 ${esc(String(o.announcedAt).slice(0, 10))}</span> <a href="${esc(o.url)}" target="_blank" rel="noopener">官方原文</a></p>`).join('') || '<p class="muted">没有待确认的预告。</p>'}`;
+}
+/* 本周准确率（2026-11-23）：自动结案是否可靠、花费是否值得。撤销率升高时先查最近新增的规则。 */
+async function loadWeeklyMetrics(body) {
+  body.textContent = '正在读取…';
+  let d; try { d = await adm('/screening/weekly-metrics'); } catch (e) { body.textContent = '读取失败：' + e.message; return; }
+  const autoTotal = d.autoApproved + d.autoRejected, rate = autoTotal ? Math.round(d.autoCloseReversed / autoTotal * 1000) / 10 : 0;
+  body.className = 'small';
+  body.innerHTML = `<p>最近 7 天：自动上架 ${d.autoApproved} 条、自动结案 ${d.autoRejected} 条，抽查撤销 ${d.autoCloseReversed} 条（${rate}%）；管理员通过 ${d.adminApproved}、拒绝 ${d.adminRejected}。</p>
+    <p>新上架 ${d.published} 条；模型花费 ${d.modelCost.map(r => `${esc(r.provider)} ${r.calls} 次 ¥${r.cny ?? 0}`).join('，') || '无'}；每条上架约 ${d.costPerPublished == null ? '—' : '¥' + d.costPerPublished}。</p>`;
 }
 /* 噪声信源（2026-10-22）：30 天里反复重读却没有带来新福利的信源，供管理员判断是否停用（拉黑）。 */
 async function loadNoisySources(body) {
