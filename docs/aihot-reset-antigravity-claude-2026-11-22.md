@@ -1,6 +1,6 @@
-# AIHOT Antigravity / Claude reset 自动上架
+# AIHOT Antigravity / Claude / Grok Bot reset 自动上架
 
-管理员于 2026-11-22 明确授权：Antigravity 与 Claude 的额度重置“与 Codex reset 一样”自动上架。执行路径、身份去重、版本化批准、持久续传和撤销方式沿用 [Codex 专项说明](aihot-reset-auto-publish-2026-10-18.md)，以下只记差异。
+管理员于 2026-11-22 明确授权：Antigravity 与 Claude 的额度重置“与 Codex reset 一样”自动上架；2026-11-23 扩展到 Grok Bot。执行路径、身份去重、版本化批准、持久续传和撤销方式沿用 [Codex 专项说明](aihot-reset-auto-publish-2026-10-18.md)，以下只记差异。
 
 ## 授权范围
 
