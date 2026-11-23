@@ -95,7 +95,9 @@ async function extractAndPostUnlocked(src: Source, url: string, text: string, so
   const estimate = Math.ceil(text.length / 2) + 1500;
   if (estimate > tokensLeft) { stats.extractSkipped++; log(`  今日模型预算不足（剩 ${tokensLeft}），留到下次`); return false; }
   const deferCount = Number((src.config as { deferCount?: number } | undefined)?.deferCount ?? 0);
-  const allowPaid = paidAvailable() && deferCount >= 1 && costLeft > 0.05;
+  // 信源页面本身（非新文章）只有曾产出过条目才允许付费兜底；从未产出过福利的价格页、首页只用免费模型。
+  const productive = url !== src.url || (await offerIndex().catch(() => [] as IndexedOffer[])).some(k => !!k.evidenceUrl && normUrl(k.evidenceUrl) === normUrl(url));
+  const allowPaid = paidAvailable() && deferCount >= 1 && costLeft > 0.05 && productive;
   if (!modelAvailable(allowPaid)) { stats.deferred++; src.deferThisRun = true; return false; }
   let r: Awaited<ReturnType<typeof extract>>;
   try {
@@ -180,13 +182,17 @@ async function extractAndPostUnlocked(src: Source, url: string, text: string, so
   return (!hasWriteError||durable) && invalidCount === 0;
 }
 
+const PERK_SIGNAL = /免费|赠|送|额度|积分|试用|限免|优惠|新用户|返还|补偿|重置|credits?\b|free|trial|bonus|tokens?\b|quota|promo|coupon|reset|[$¥￥]\s?\d|\d\s?(?:元|美元|刀|万|亿|%|k\b|m\b)/i;
 async function officialPage(src: Source) {
   const fetchedPage=await fetchPage(src.url);noteSourceFetched(src);const {text,via,finalUrl}=fetchedPage;
   const rel = relevantText(text);
   const hash = sha256(rel);
   if (hash === src.lastHash && !FORCE) { await report(src, true); log(`  无变化（${via}）`); return; }
   // 只有出现新的羊毛相关句子才重新抽取：删句、换顺序不会带来新福利，却让已收录条目每 6 小时被模型重读一遍（2026-10-15）。
-  if (!FORCE && src.lastText != null && !newRelevantLines(src.lastText, rel).length) { await report(src, true, { hash, text: rel }); stats.unchangedPages++; log(`  只有删减或顺序变化，没有新内容（${via}）`); return; }
+  const added = src.lastText != null ? newRelevantLines(src.lastText, rel) : null;
+  // 新句子里没有金额、额度、免费、赠送等福利信号（只是日期、横幅、导航变化）时不重读：2026-11 有 87 次付费重读一无所获。
+  if (!FORCE && added && added.length && !added.some(line => PERK_SIGNAL.test(line))) { await report(src, true, { hash, text: rel }); stats.unchangedPages++; log(`  新增内容没有福利信号，不重读（${via}）`); return; }
+  if (!FORCE && added && !added.length) { await report(src, true, { hash, text: rel }); stats.unchangedPages++; log(`  只有删减或顺序变化，没有新内容（${via}）`); return; }
   stats.changed++;
   log(`  有变化（${via}，相关文本 ${rel.length} 字）`);
   const extractionSource = via === 'jina' ? { ...src, tier: 'media', autoPublish: false } : src;
