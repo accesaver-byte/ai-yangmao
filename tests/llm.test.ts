@@ -109,6 +109,17 @@ describe('model result contract', () => {
       await expect(extract('Vendor', 'https://vendor.example/free', 'Free API credits')).rejects.toThrow();
     });
 
+  it('retries the last free model once with the validation feedback before paying', async () => {
+    vi.stubEnv('OPENROUTER_API_KEY', 'test-key');vi.stubEnv('OPENROUTER_MODEL', 'test:free');vi.stubEnv('DEEPSEEK_API_KEY', 'paid-key');
+    const calls:string[]=[];let openrouter=0;
+    vi.stubGlobal('fetch', vi.fn(async input => {const url=String(input);
+      if(url.includes('googleapis')){calls.push('gemini');return gemini('{"error":"unable to extract"}');}
+      if(url.includes('openrouter')){calls.push('openrouter');openrouter++;return new Response(JSON.stringify({ choices: [{ message: { content: openrouter===1?'{"error":"x"}':'{"offers":[]}' } }], usage: { total_tokens: 10 } }));}
+      calls.push('deepseek');return new Response(JSON.stringify({ choices: [{ message: { content: '{"offers":[]}' } }], usage: { total_tokens: 10, prompt_tokens: 5, completion_tokens: 5 } }));}));
+    const { extract } = await import('../pipeline/llm');
+    const result = await extract('Vendor', 'https://vendor.example/free', 'Free API credits', undefined, { allowPaid: true });
+    expect(result.provider).toBe('openrouter');expect(calls).toEqual(['gemini','openrouter','openrouter']);
+  });
   it('falls back after an invalid envelope and still records the first provider usage', async () => {
     vi.stubEnv('OPENROUTER_API_KEY', 'test-key');
     vi.stubEnv('OPENROUTER_MODEL', 'test:free');
