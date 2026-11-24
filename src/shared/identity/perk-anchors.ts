@@ -43,7 +43,7 @@ export function textSimilarity(a: string, b: string): number {
   return both / (x.size + y.size - both);
 }
 
-export type PerkView = { platformId: string; title: string; valueText: string; models?: readonly string[]; requirements?: readonly string[] };
+export type PerkView = { platformId: string; title: string; valueText: string; models?: readonly string[]; requirements?: readonly string[]; sourceUrl?: string | null };
 const jaccard = (a: Set<string>, b: Set<string>) => { if (!a.size && !b.size) return 1; let both = 0; for (const v of a) if (b.has(v)) both++; return both / (a.size + b.size - both); };
 
 /**
@@ -61,6 +61,9 @@ export function samePerk(a: PerkView, b: PerkView): boolean {
   const modelsConflict = ma.size > 0 && mb.size > 0 && jaccard(ma, mb) < 0.3;
   if (amountsConflict || modelsConflict) return false;
   const anchored = (na.size > 0 && nb.size > 0) || (ma.size > 0 && mb.size > 0);
+  // 2026-11-24 (admin): reports from the same page with near-identical titles are one perk even when only some of
+  // them quote the amounts (云知声认证礼包 opened 6 cards: one listed "500万 tokens", the others only "丰厚的免费调用量").
+  if (a.sourceUrl && a.sourceUrl === b.sourceUrl && textSimilarity(a.title, b.title) >= 0.5) return true;
   return (anchored && text >= 0.25) || text >= 0.55;
 }
 

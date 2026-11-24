@@ -37,6 +37,18 @@ it('anchors decide, not wording', () => {
   expect(samePerk(v('注册送 10 美元', '新用户 10 美元额度'), { ...v('注册送 10 美元', '新用户 10 美元额度'), platformId: 'other' })).toBe(false);
 });
 
+it('same page and near-identical title group even when only one report quotes the amounts', () => {
+  const page = 'https://ai.unisound.com/doc/platform/guide/quickstart.html';
+  const v = (title: string, valueText: string, sourceUrl: string | null = page) => ({ platformId: 'unisound', title, valueText, sourceUrl });
+  const full = v('云知声开发者认证礼包', '试运行期间对通过认证的开发者发放认证礼包（含各文本/视觉模型500万tokens、ASR5小时、TTS5小时）');
+  const vague = v('云知声开发者认证礼包', '完成个人或企业开发者实名认证后，可领取并通过控制台享受丰厚的免费调用量与调用时长服务。');
+  expect(samePerk(full, vague)).toBe(true);
+  // Another page, a different title, or conflicting amounts on the same page stay apart.
+  expect(samePerk(full, { ...vague, sourceUrl: 'https://www.unisound.com/research/177' })).toBe(false);
+  expect(samePerk(full, v('云知声 U2-Flash-1118 模型 API 限时六折优惠', '限时六折'))).toBe(false);
+  expect(samePerk(v('云知声认证礼包 500 万 tokens', '500 万 tokens'), v('云知声认证礼包 100 万 tokens', '100 万 tokens'))).toBe(false);
+});
+
 it('a one-off regroup merges cards opened before grouping, moves their candidates and re-points waiting leads', async () => {
   const f = auditFixture(); try {
     const report = async (id: string, text: string, patch: Record<string, unknown>) => {

@@ -1,4 +1,5 @@
 import { samePerk, textSimilarity, type PerkView } from '../../shared/identity/perk-anchors';
+import { normalizeDocumentUrl } from '../../shared/identity/normalize';
 
 /**
  * Group repeated reports of one perk into one review card (2026-10-16). The same perk arrives from many pages in
@@ -8,11 +9,17 @@ import { samePerk, textSimilarity, type PerkView } from '../../shared/identity/p
  */
 const GROUP_MAX = 10, GROUP_WINDOW_DAYS = 21;
 
+function sourceUrl(evidence: unknown): string | null {
+  const url = (evidence as { url?: unknown } | null)?.url;
+  if (typeof url !== 'string') return null;
+  try { return normalizeDocumentUrl(url); } catch { return null; }
+}
+
 function view(raw: string): PerkView | null {
   try {
     const c = (JSON.parse(raw) as { candidate?: Record<string, unknown> }).candidate ?? {};
     if (typeof c.platformId !== 'string' || typeof c.title !== 'string') return null;
-    return { platformId: c.platformId, title: c.title, valueText: typeof c.valueText === 'string' ? c.valueText : '', models: Array.isArray(c.models) ? c.models.filter((m): m is string => typeof m === 'string') : [], requirements: Array.isArray(c.requirements) ? c.requirements.filter((m): m is string => typeof m === 'string') : [] };
+    return { platformId: c.platformId, title: c.title, valueText: typeof c.valueText === 'string' ? c.valueText : '', models: Array.isArray(c.models) ? c.models.filter((m): m is string => typeof m === 'string') : [], requirements: Array.isArray(c.requirements) ? c.requirements.filter((m): m is string => typeof m === 'string') : [], sourceUrl: sourceUrl(c.evidence) };
   } catch { return null; }
 }
 
