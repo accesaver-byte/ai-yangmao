@@ -51,6 +51,8 @@ npx tsx .claude/skills/yangmao-review/scripts/offer.ts plan <短码> patch.json
 
 ## 调度与线索到审核
 
+**自动条款更新（2026-11-24管理员授权）**：同页重读命中已批准条目时，`src/shared/identity/auto-update.ts` 判定延期、提前结束或模型减少并写入 `auto_term_updates` 排队；Worker 每小时（`CRON.leads`）取最多 3 条，经 `editManagedOffer` + `decideTask` 以 `policy:auto-update-v1` 发布。列表与撤销：`GET /api/admin/screening/spot-check/updates`、`POST …/updates/:id/undo`（恢复原条款并停止该条目的自动更新）。
+
 **AIHOT Codex reset（2026-10-18管理员授权）**：`aihot-resets` 可启用专用自动上架，采集器使用 AIHOT 提供的 X 员工原帖链接作证据，跳过模型研判排队并走既有身份去重与版本化批准；其他线索源仍按原规则。2026-10-22 起是否重置及日期以 AIHOT 事件类型、状态、时间与中文备注判定，原帖只核对作者、ID 与时间。主公告上下文修复、开关、续传及发布凭证见 [专项说明](aihot-reset-auto-publish-2026-10-18.md)。
 
 **AIHOT Antigravity / Claude / Grok Bot reset（2026-11-22/23 管理员授权）**：`aihot-antigravity-resets`、`aihot-claude-resets` 与 `aihot-grok-resets` 按同一流程自动上架，产品配置在 `AIHOT_RESET_PROFILES`，各自用 `sources.auto_publish` 开关；`/api/ingest/aihot-resets` 请求体带 `product`，`/pending?product=` 分产品续传，Codex 请求格式不变。差异见 [专项说明](aihot-reset-antigravity-claude-2026-11-22.md)。

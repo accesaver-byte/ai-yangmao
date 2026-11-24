@@ -1,3 +1,4 @@
+import { applyQueuedAutoTermUpdates } from './identity/auto-update';
 // 飞书群日报与加急提醒（Cloudflare Worker 定时任务发送，不依赖本地机器），以及每 6 小时触发一次 GitHub 采集。
 // 发送沿用通知台账：先占位（claimNotice），飞书返回成功后才记为已发送（ackDelivery）。
 import { eq, inArray } from 'drizzle-orm';
@@ -278,6 +279,8 @@ export async function runScheduled(cron: string, env: Env, now = new Date()) {
     }
   }
   if (cron === CRON.leads) console.log('触发快速线索研判', JSON.stringify(await scheduledCollect(env, undefined, true)));
+  // 2026-11-24 (admin): queued automatic term updates of approved perks; a failure leaves an ordinary update card.
+  if (cron === CRON.leads) { try { console.log('自动条款更新', JSON.stringify(await applyQueuedAutoTermUpdates(env.DB))); } catch (error) { console.warn('自动条款更新失败', String(error)); } }
   if (cron === CRON.collect) console.log('触发采集', JSON.stringify(await scheduledCollect(env)));
 }
 

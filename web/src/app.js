@@ -2455,7 +2455,7 @@ const FT_STATE = { queued: '排队等模型读取', extracting: '模型读取中
 const SPOT_CATS = ['non_ai', 'relay_station', 'account_pool', 'personal_giveaway', 'ordinary_discount', 'paid_bundle', 'model_news_only', 'duplicate', 'expired'];
 async function loadSpotCheck(body) {
   body.textContent = '正在读取…';
-  let data, cards, refusals; try { [data, { cards }, { refusals }] = await Promise.all([adm('/screening/spot-check?days=7'), adm('/screening/spot-check/cards?days=7'), adm('/screening/spot-check/refusals?days=7')]); } catch (e) { body.textContent = '读取失败：' + e.message; return; }
+  let data, cards, refusals, updates; try { [data, { cards }, { refusals }, { updates }] = await Promise.all([adm('/screening/spot-check?days=7'), adm('/screening/spot-check/cards?days=7'), adm('/screening/spot-check/refusals?days=7'), adm('/screening/spot-check/updates?days=7')]); } catch (e) { body.textContent = '读取失败：' + e.message; return; }
   body.className = 'small';
   const row = it => `<div data-spot="${it.id}" class="row" style="gap:6px;flex-wrap:wrap;align-items:center;padding:4px 0;border-bottom:1px solid var(--line,#333)"><a href="${esc(it.url)}" target="_blank" rel="noopener" style="flex:1;min-width:220px">${esc(it.title)}</a><span class="muted">${esc(it.origin)} · ${it.closedBy === 'gate0_link' ? '系统判为重复并关联' : it.closedBy === 'rule' ? '入口规则' : '自动研判'}：${esc(it.reason.slice(0, 40))}</span><select data-spot-cat>${SPOT_CATS.map(k => `<option value="${k}" ${k === it.category ? 'selected' : ''}>${esc(REASON_LABEL[k] || k)}</option>`).join('')}</select><button class="btn sm" data-spot-wrong>${it.recoveryPending ? '继续恢复待审' : it.closedBy === 'gate0_link' ? '↩ 不是重复，放回队列' : '✗ 误关，恢复待审'}</button><button class="btn sm" data-spot-fast>⚡ 上架</button></div>`;
   const likely = data.items.filter(i => i.likely), rest = data.items.filter(i => !i.likely);
@@ -2463,7 +2463,8 @@ async function loadSpotCheck(body) {
   body.innerHTML = `<p class="muted">系统自己关闭、你还没看过的线索。先看“可能误关”（标题提到已知厂商或免费、额度、赠送等词）。确认关得对的会成为里程碑 2 的校准样本，类别请按实际选；误关可恢复待审，恢复完成前可继续操作；⚡ 上架仍按管理员快速上架流程执行。入口规则误关超过 10%（至少 10 次命中）会自动停用。</p>
     ${cards.length ? `<details open data-spot-cards><summary>🤖 系统查重结案 · ${cards.length} 张</summary><p class="muted">模型判为与已上架活动重复、且没有新金额/模型/门槛的查重卡，已按重复结案。判错的点“不是重复”放回查重队列。</p>${cards.map(card => `<div data-spot-card="${esc(card.decisionId)}" class="row" style="gap:6px;flex-wrap:wrap;align-items:center;padding:4px 0;border-bottom:1px solid var(--line,#333)"><a href="${esc(card.url)}" target="_blank" rel="noopener" style="flex:1;min-width:220px">${esc(card.title)}</a><span class="muted">与已上架「<a href="#offer-${esc(card.offerId)}">${esc(card.offerTitle)}</a>」重复 · 置信度 ${esc(String(card.confidence))}</span><button class="btn sm" data-card-ok>✅ 关得对</button><button class="btn sm" data-card-undo>↩ 不是重复，放回队列</button></div>`).join('')}</details>` : ''}
     ${refusals.length ? `<details data-spot-refusals><summary>🧠 沿用你的拒绝自动结案 · ${refusals.length} 条</summary><p class="muted">同一页面的同一段内容你已经拒绝过、重读时也没有新金额/模型/门槛，系统按你当时的决定结案。不该沿用的点“恢复审核”，这段内容会回到查重队列，之后不再自动结案。</p>${refusals.map(r => `<div data-spot-refusal="${esc(r.decisionId)}" class="row" style="gap:6px;flex-wrap:wrap;align-items:center;padding:4px 0;border-bottom:1px solid var(--line,#333)"><a href="${esc(r.url)}" target="_blank" rel="noopener" style="flex:1;min-width:220px">${esc(r.title)}</a><span class="muted">重读结案 ${r.closedReads} 次 · 你的理由：${esc(r.reason.slice(0, 50))}</span><button class="btn sm" data-refusal-undo>↩ 不该沿用，恢复审核</button></div>`).join('')}</details>` : ''}
-    ${group('likely', '⚠️ 可能误关', likely, true)}${group('rest', '其余自动关闭', rest, false)}${data.items.length || cards.length || refusals.length ? '' : '<p class="muted">最近 7 天没有待抽查的自动关闭线索。</p>'}`;
+    ${updates.length ? `<details open data-spot-updates><summary>🔄 自动条款更新 · ${updates.length} 条</summary><p class="muted">已上架活动的官方页面写明延期、提前结束或模型减少，系统已按原文更新（不含新金额、新模型或门槛变化）。不对的点“撤销”恢复原批准条款，该活动之后不再自动更新。</p>${updates.map(u => `<div data-spot-update="${esc(u.id)}" class="row" style="gap:6px;flex-wrap:wrap;align-items:center;padding:4px 0;border-bottom:1px solid var(--line,#333)"><a href="#offer-${esc(u.offerId)}" style="flex:1;min-width:220px">${esc(u.title || u.offerId)}</a><span class="muted">${u.kinds.map(k => ({ extend_deadline: '延期', end_earlier: '提前结束', fewer_models: '模型减少' })[k] || k).join('、')}${u.after.claimEnd !== undefined ? ` · 截止 ${esc(String(u.before.claimEnd ?? '常驻'))} → ${esc(String(u.after.claimEnd))}` : ''}${u.after.models ? ` · 模型 ${esc((u.before.models || []).join(', '))} → ${esc(u.after.models.join(', '))}` : ''}${u.state === 'failed' ? ` · 未能自动应用，已留待审：${esc(String(u.detail || '').slice(0, 60))}` : ''}</span>${u.state === 'applied' ? '<button class="btn sm" data-update-ok>✅ 没问题</button><button class="btn sm" data-update-undo>↩ 撤销，恢复原条款</button>' : ''}</div>`).join('')}</details>` : ''}
+    ${group('likely', '⚠️ 可能误关', likely, true)}${group('rest', '其余自动关闭', rest, false)}${data.items.length || cards.length || refusals.length || updates.length ? '' : '<p class="muted">最近 7 天没有待抽查的自动关闭线索。</p>'}`;
   const done = (el, text) => { el.style.opacity = .45; el.querySelectorAll('button,select').forEach(x => { x.disabled = true; }); if (text) el.insertAdjacentHTML('beforeend', `<span class="small">${esc(text)}</span>`); };
   body.querySelectorAll('[data-spot]').forEach(el => {
     const id = Number(el.dataset.spot), it = data.items.find(x => x.id === id);
@@ -2487,6 +2488,15 @@ async function loadSpotCheck(body) {
     };
     el.querySelector('[data-spot-wrong]').addEventListener('click', () => recover());
     el.querySelector('[data-spot-fast]').addEventListener('click', () => openFastTrackForm({benefit:it.title.slice(0,500),url:it.url},id,{},async()=>recover(true)));
+  });
+  body.querySelectorAll('[data-spot-update]').forEach(el => {
+    const id = encodeURIComponent(el.dataset.spotUpdate), buttons = el.querySelectorAll('button');
+    const act = (sel, path, text) => el.querySelector(sel)?.addEventListener('click', async () => {
+      buttons.forEach(x => { x.disabled = true; });
+      try { await adm(`/screening/spot-check/updates/${id}/${path}`, {}); done(el, text); } catch (e) { buttons.forEach(x => { x.disabled = false; }); toast(e.message); }
+    });
+    act('[data-update-ok]', 'confirm', '已确认');
+    act('[data-update-undo]', 'undo', '已恢复原批准条款');
   });
   body.querySelectorAll('[data-spot-refusal]').forEach(el => {
     const button = el.querySelector('[data-refusal-undo]');

@@ -23,6 +23,7 @@ import { decisionApplies,evaluateReopen,reviewTaskKey } from '../../shared/ident
 import { claimIdentityKey,hashTerms,sha256,stableJson } from '../../shared/identity/normalize';
 import { IdentityStore,IdentityError,readReviewDecision } from './store';
 import { findPerkGroup } from './perk-group';
+import { queueAutoTermUpdate } from './auto-update';
 import { MutationBuilder,commitIdentityMutation,readIdentityReceipt,type Binding,type ExpectedRevision,type Predicate } from './commit';
 type OfferRow=typeof tables.offers.$inferSelect;
 type CandidateRow={id:string;observation_id:string;facts_json:string;facts_hash:string;raw_candidate_json:string;receipt_json:string|null;revision:number;entity_id:string|null;state:string;task_id:string|null;last_error:string|null;claim_family_key:string|null;assertion_facts_hash:string|null;source_fetch_id:string|null};
@@ -396,6 +397,8 @@ export class IdentityService {
     builder.require('NOT EXISTS(SELECT 1 FROM review_decisions WHERE supersedes_id=?)',[reviewed.decisionId]);
     Object.assign(receipt,{entityId:reviewed.entityId,versionId:reviewed.versionId,decisionId:reviewed.decisionId,canonicalOfferId:reviewed.offerId,taskId:null,entityRevision:reviewed.revision,outcome:reviewed.action==='approve'?'duplicate_approved':'duplicate_rejected',reasonCodes:[reviewed.reason??'reviewed_legacy_assertion'],retryable:false});
     builder.insert('entity_observations',{entity_id:reviewed.entityId,candidate_id:candidate.id,relation:'same',resolver_version:RESOLVER_VERSION,reason_json:JSON.stringify({reason:reviewed.reason??'reviewed_legacy_assertion',decisionId:reviewed.decisionId})},'nothing');
+    // 2026-11-24 (admin): a later or earlier end date, or fewer models, on the perk's own page is queued as an automatic update.
+    if(reviewed.action==='approve'&&reviewed.reason==='same_source_reread'&&!evidence.truncated){const update=await queueAutoTermUpdate(this.db,reviewed,candidate.id,candidate.raw_candidate_json,evidence.fullText);if(update){builder.insert('auto_term_updates',update,'nothing');receipt.reasonCodes.push('auto_update_queued');}}
     builder.update('intake_candidates',{entity_id:reviewed.entityId,version_id:reviewed.versionId,decision_id:reviewed.decisionId,task_id:null,state:reviewed.action==='approve'?'resolved_same':'resolved_rejected',revision:candidate.revision+1,receipt_json:JSON.stringify(receipt),last_error:null,next_attempt_at:null,lease_token:null,lease_until:null},'id=? AND revision=?',[candidate.id,candidate.revision]);builder.assertOwnership('intake_candidates',candidate.id);
     return this.commit(builder,expected,receipt);
    }

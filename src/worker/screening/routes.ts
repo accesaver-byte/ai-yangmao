@@ -1,3 +1,4 @@
+import { listAutoTermUpdates, confirmAutoTermUpdate, undoAutoTermUpdate } from '../identity/auto-update';
 import { amounts } from '../../shared/identity/perk-anchors';
 import { IdentityError } from '../identity/store';
 import { Hono } from 'hono';
@@ -345,6 +346,13 @@ screeningAdminRoutes.post('/spot-check/cards/:id/undo', async c => {
 screeningAdminRoutes.get('/spot-check/refusals', async c => c.json({ refusals: await listPageRefusals(c.env.DB, Math.min(30, Math.max(1, Number(c.req.query('days') ?? 7) || 7))) }));
 screeningAdminRoutes.post('/spot-check/refusals/:id/undo', async c => {
   try { return c.json(await undoPageRefusal(c.env.DB, c.req.param('id'), c.get('who'))); }
+  catch (error) { if (error instanceof IdentityError) return c.json({ error: error.message }, error.status); throw error; }
+});
+/** Approved perks whose terms the system updated from their own official page (2026-11-24); undo restores the old terms (admin only). */
+screeningAdminRoutes.get('/spot-check/updates', async c => c.json({ updates: await listAutoTermUpdates(c.env.DB, Math.min(30, Math.max(1, Number(c.req.query('days') ?? 7) || 7))) }));
+screeningAdminRoutes.post('/spot-check/updates/:id/confirm', async c => c.json(await confirmAutoTermUpdate(c.env.DB, c.req.param('id'), c.get('who'))));
+screeningAdminRoutes.post('/spot-check/updates/:id/undo', async c => {
+  try { return c.json(await undoAutoTermUpdate(c.env.DB, c.req.param('id'), c.get('who'))); }
   catch (error) { if (error instanceof IdentityError) return c.json({ error: error.message }, error.status); throw error; }
 });
 /** Announcements with no stated time that are still unconfirmed 14 days on: the owner confirms or withdraws them (admin only). */
