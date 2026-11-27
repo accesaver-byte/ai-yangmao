@@ -68,6 +68,8 @@ npx tsx .claude/skills/yangmao-review/scripts/offer.ts plan <短码> patch.json
 
 Worker UTC 00:00对应东京09:00、上海08:00。Hermes未设置独立任务时区时使用调度器时区，不能从脚本“东京时间”注释推断；2026-10-09实际安装为纽约时间09:00，详见整理凭证。安装脚本会重建定时任务，不能作为文档同步命令运行。
 
+**仓库通知机器人（2026-11-26 管理员要求与 Hermes 对话分开）**：Hermes 只负责定时调度。`.prod.secrets` 写入 `YM_TELEGRAM_BOT_TOKEN`（BotFather 新建的机器人）与 `YM_TELEGRAM_CHAT_ID` 后，`ym dispatch` 与每小时健康告警（`ym send`）直接调用 Telegram Bot API 发出，Hermes 定时任务的输出为空、不再转发；任一未配置时沿用 `hermes send`（Hermes 的机器人）。`ym telegram-status` 查看当前通道，`ym telegram-chats` 在给新机器人发过一条消息后列出 chat_id。机器人发送失败时健康告警回退由 Hermes 送达；脚本异常的失败通知仍走 Hermes。修改 `integrations/hermes/scripts/` 后须把脚本同步到 `~/.hermes/scripts/`（安装脚本会一并重建定时任务）。
+
 两种collect任务共用并发组、不取消正在执行的任务，默认研判最多50条。快速通道采AIHOT与社区feed，之后研判并执行待审官方补证；全量再处理其他官方信源。已批准条目不再因旧证据页定期重抓而转待核验；新发现的明确业务变化仍生成待审更新。初抽最多15分钟，并给后续补证留时间；整轮40分钟工作窗口，Actions45分钟限时。
 
 人工补录优先；调度给自动发现留名额，并保留20%最老积压。排序只决定先后。成功入库后才标linked；部分失败、未知平台、重要福利漏抽等转reviewing，并自动进入受阻线索官方复核。取不到原文时可用备注/摘要形成媒体级稿；失效补录不无限占据new队首。后台支持状态筛选和游标分页，全部受阻线索在待审区有进度与处理入口；可筛选已关联/已结束追溯依据。详见自动官方复核文档的受阻线索环节。
@@ -106,7 +108,7 @@ gh workflow run collect.yml --ref main -f fast_leads=true -f lead_limit=50
 
 公开 offers/platforms 最多使用 5 分钟边缘缓存；offers 响应要求浏览器每次重验证，评论接口 no-store，后台 no-store。内部 memo、suggestion、officialReview 及完整修订明细不公开；公开简介和步骤只写领取者需要的权益与条件，核验过程写内部记录。后台不定时重画输入表单；编辑延迟挂载并保留草稿，心得持续显示未保存/保存中/已保存/失败。待审链接 `#admin-offer-ID` 登录后定位；提交带 reviewVersion，内容变化或竞争返回 409。更新提案展示公开值与候选值的增删改对比，证据拆项，忽略单纯抓取元数据变化。
 
-Telegram审核提醒按对象版本去重，每批最多10条，临期优先并保留积压名额。`digest`/`urgent`仅预览；`dispatch digest|urgent`经Hermes实际发送，须有授权。发送前占位，成功后ack；pending/unknown不能换批次重发，人工确认后用delivery-delivered或delivery-unsent结案。正常定时任务可能已送达新条目，手动推送前查台账。
+Telegram审核提醒按对象版本去重，每批最多10条，临期优先并保留积压名额。`digest`/`urgent`仅预览；`dispatch digest|urgent`实际发送（仓库机器人或 Hermes，见上文），须有授权。发送前占位，成功后ack；pending/unknown不能换批次重发，人工确认后用delivery-delivered或delivery-unsent结案。正常定时任务可能已送达新条目，手动推送前查台账。
 
 飞书日报选常驻5、新星3、末班车3，跨榜去重。新星为近14天未通知，末班车为3天内截止；不含待审、独立变更或已结束榜。webhook未配置或未验证时不能声称送达。
 

@@ -1,4 +1,5 @@
 import { adminHttp } from './admin-http';
+import { botConfig, sendTelegram } from './telegram-send';
 // ym：AI 羊毛牧场的命令行工具，给 Hermes Agent 的技能调用（也可以自己在终端用）。
 // 密钥从项目根目录的 .prod.secrets 读取（ADMIN_TOKEN）。输出为适合直接发到 Telegram 的中文纯文本。
 import { readFileSync } from 'node:fs';
@@ -35,7 +36,10 @@ const HELP = `用法：ym <命令>
   on <YYYY-MM-DD>       某一天有效的限时羊毛
   digest                只预览日报，不写通知台账
   urgent                只预览加急，不写通知台账
-  dispatch digest|urgent 通过 Hermes 发送，成功后才确认通知台账
+  dispatch digest|urgent 发到 Telegram（配了仓库机器人走它，否则经 Hermes），成功后才确认通知台账
+  send                  把标准输入发到同一 Telegram 通道（空输入不发）
+  telegram-status       看通知走仓库机器人还是 Hermes
+  telegram-chats        配好机器人令牌后列出给它发过消息的 chat_id
   health                采集健康状况（有问题才输出，--verbose 总是输出）
   platform-approve <平台id> / platform-reject <平台id>
   auto-publish <信源id> on|off
@@ -148,15 +152,43 @@ ${revisions.length ? `修订：${revisions.map((r: any) => r.diff.map((x: any) =
       ? (r.items.urgent.length ? `⚡ 加急：48 小时内截止\n${r.items.urgent.map(line).join('\n')}` : '')
       : `🐑 AI 羊毛牧场日报 · ${d}\n${sec('🆕 新上架', r.items.new)}${sec('⏰ 3 天内结束', r.items.ending)}${sec('🔄 条款变化', r.items.changed)}${sec('❌ 已结束', r.items.ended)}${r.pendingCount ? `\n📝 待审 ${r.pendingCount} 条，回复"看待审"处理` : ''}${r.needsVerificationCount ? `\n⚠️ ${r.needsVerificationCount} 条权益证据待核验，回复"看待审"处理` : ''}${r.coverageDegraded ? '\n⚠️ 部分抓取、抽取或官方核验未完成；请查看采集健康，自动任务会继续重试' : ''}${r.suggestAutoPublish?.length ? `\n🔓 建议审核自动上架信源：${r.suggestAutoPublish.join('、')}` : ''}\n\n网页：https://ai-yangmao.com`);
     if (cmd !== 'dispatch') { console.log(message); break; }
-    const { spawnSync } = await import('node:child_process');
-    const sent = spawnSync('hermes', ['send', '--to', 'telegram', '--quiet', '--file', '-'], { input: message, encoding: 'utf8', timeout: 30000 });
-    if (sent.error || sent.status !== 0) {
-      await call(`/notify/${r.deliveryId}/ack`, { status: 'unknown', error: String(sent.error?.message ?? sent.stderr ?? `Hermes exit ${sent.status}`).slice(0, 500) });
+    const sent = await sendTelegram(env, message);
+    if (sent.status !== 'sent') {
+      // 台账只有 sent/unknown；Telegram 明确拒绝时在错误里写明“未送达”，管理员可直接按 delivery-unsent 结案。
+      await call(`/notify/${r.deliveryId}/ack`, { status: 'unknown', error: `${sent.status === 'failed' ? '确定未送达：' : ''}${sent.via === 'bot' ? '仓库机器人' : 'Hermes'} ${sent.error ?? ''}`.slice(0, 500) });
       console.error('Telegram 投递结果不明，已留待人工核对，未自动重发。');
       process.exitCode = 1;
       break;
     }
     await call(`/notify/${r.deliveryId}/ack`, { status: 'sent' });
+    break;
+  }
+  case 'send': {
+    // 把标准输入的文字发到仓库通知机器人（未配置时走 Hermes）；空输入不发。给 Hermes 定时任务的健康告警用。
+    const text = readFileSync(0, 'utf8').split('\n').filter(l => l.trim() && !l.startsWith('npm notice')).join('\n');
+    if (!text) break;
+    const sent = await sendTelegram(env, text);
+    if (sent.status !== 'sent') { console.error(`Telegram 发送${sent.status === 'failed' ? '失败' : '结果不明'}：${sent.error ?? ''}`); process.exitCode = 1; }
+    break;
+  }
+  case 'telegram-status': {
+    // 只报告是否配置及走哪条通道，不打印令牌。
+    const config = botConfig(env);
+    if (!config) { console.log('未配置仓库机器人：通知仍经 Hermes 的 Telegram 机器人发送。'); process.exitCode = 3; break; }
+    const me = await fetch(`https://api.telegram.org/bot${config.token}/getMe`).then(r => r.json()).catch(() => null) as any;
+    console.log(me?.ok ? `仓库机器人 @${me.result.username}，发往 chat ${config.chatId}` : `仓库机器人令牌无效：${me?.description ?? '无法连接 Telegram'}`);
+    if (!me?.ok) process.exitCode = 1;
+    break;
+  }
+  case 'telegram-chats': {
+    // 找 chat_id：先在 Telegram 里给新机器人发一条消息，再运行这个命令。
+    const token = env.YM_TELEGRAM_BOT_TOKEN?.trim();
+    if (!token) { console.error('先在 .prod.secrets 写入 YM_TELEGRAM_BOT_TOKEN'); process.exitCode = 2; break; }
+    const u = await fetch(`https://api.telegram.org/bot${token}/getUpdates`).then(r => r.json()).catch(() => null) as any;
+    if (!u?.ok) { console.error(`读取失败：${u?.description ?? '无法连接 Telegram'}`); process.exitCode = 1; break; }
+    const chats = new Map<string, string>();
+    for (const x of u.result) { const c = (x.message ?? x.channel_post ?? x.my_chat_member)?.chat; if (c) chats.set(String(c.id), `${c.type} ${c.title ?? [c.first_name, c.last_name].filter(Boolean).join(' ')}${c.username ? ` @${c.username}` : ''}`); }
+    console.log(chats.size ? [...chats].map(([id, d]) => `${id}  ${d}`).join('\n') : '没有新消息：先在 Telegram 里给机器人发一条消息（频道/群需先把机器人加进去），再运行。');
     break;
   }
   case 'health': {
