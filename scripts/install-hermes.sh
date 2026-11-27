@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 把 AI 羊毛牧场技能和定时任务装进 Hermes Agent（复用 Hermes 已有的 Telegram 机器人）。
+# 把 AI 羊毛牧场技能和定时任务装进 Hermes Agent。Hermes 只负责调度；配了仓库通知机器人（.prod.secrets 的 YM_TELEGRAM_*）时消息由它发出，否则用 Hermes 的 Telegram 机器人。
 # 重复运行会覆盖技能文件、重建定时任务。
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
